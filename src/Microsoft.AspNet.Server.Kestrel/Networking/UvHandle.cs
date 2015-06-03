@@ -2,6 +2,7 @@
 // Licensed under the Apache License, Version 2.0. See License.txt in the project root for license information.
 
 using System;
+using System.Diagnostics;
 using System.Threading;
 
 namespace Microsoft.AspNet.Server.Kestrel.Networking
@@ -17,6 +18,7 @@ namespace Microsoft.AspNet.Server.Kestrel.Networking
             int size,
             Action<Action<IntPtr>, IntPtr> queueCloseHandle)
         {
+            Debug.Assert(queueCloseHandle != null);
             _queueCloseHandle = queueCloseHandle;
             CreateMemory(uv, threadId, size);
         }
@@ -32,9 +34,13 @@ namespace Microsoft.AspNet.Server.Kestrel.Networking
                 {
                     _uv.close(memory, _destroyMemory);
                 }
-                else
+                else if (_queueCloseHandle != null)
                 {
                     _queueCloseHandle(memory2 => _uv.close(memory2, _destroyMemory), memory);
+                }
+                else
+                {
+                    var x = 5;
                 }
             }
             return true;
