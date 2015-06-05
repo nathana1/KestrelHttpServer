@@ -11,7 +11,7 @@ namespace Microsoft.AspNet.Server.Kestrel.Networking
     /// <summary>
     /// Summary description for UvWriteRequest
     /// </summary>
-    public class UvWriteReq : UvReq
+    public class UvWriteReq : UvRequest
     {
         private readonly static Libuv.uv_write_cb _uv_write_cb = UvWriteCb;
 
@@ -115,16 +115,6 @@ namespace Microsoft.AspNet.Server.Kestrel.Networking
             {
                 Trace.WriteLine("UvWriteCb " + ex.ToString());
             }
-        }
-    }
-
-    public abstract class UvReq : UvMemory
-    {
-        protected override bool ReleaseHandle()
-        {
-            DestroyMemory(handle);
-            handle = IntPtr.Zero;
-            return true;
         }
     }
 }

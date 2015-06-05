@@ -8,7 +8,7 @@ namespace Microsoft.AspNet.Server.Kestrel.Networking
     /// <summary>
     /// Summary description for UvShutdownRequest
     /// </summary>
-    public class UvShutdownReq : UvReq
+    public class UvShutdownReq : UvRequest
     {
         private readonly static Libuv.uv_shutdown_cb _uv_shutdown_cb = UvShutdownCb;
 
@@ -27,12 +27,14 @@ namespace Microsoft.AspNet.Server.Kestrel.Networking
         {
             _callback = callback;
             _state = state;
+            Pin();
             _uv.shutdown(this, handle, _uv_shutdown_cb);
         }
 
         private static void UvShutdownCb(IntPtr ptr, int status)
         {
             var req = FromIntPtr<UvShutdownReq>(ptr);
+            req.Unpin();
             req._callback(req, status, req._state);
             req._callback = null;
             req._state = null;
