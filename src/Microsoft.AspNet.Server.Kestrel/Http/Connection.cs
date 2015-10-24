@@ -72,12 +72,12 @@ namespace Microsoft.AspNet.Server.Kestrel.Http
                     if (task.IsFaulted)
                     {
                         connection.Log.LogError("ConnectionFilter.OnConnection", task.Exception);
-                        ConnectionControl.End(ProduceEndType.SocketDisconnect);
+                        connection.ConnectionControl.End(ProduceEndType.SocketDisconnect);
                     }
                     else if (task.IsCanceled)
                     {
                         connection.Log.LogError("ConnectionFilter.OnConnection Canceled");
-                        ConnectionControl.End(ProduceEndType.SocketDisconnect);
+                        connection.ConnectionControl.End(ProduceEndType.SocketDisconnect);
                     }
                     else
                     {

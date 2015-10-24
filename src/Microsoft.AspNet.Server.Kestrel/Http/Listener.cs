@@ -30,18 +30,18 @@ namespace Microsoft.AspNet.Server.Kestrel.Http
             Application = application;
 
             var tcs = new TaskCompletionSource<int>();
-            Thread.Post(_ =>
+            Thread.Post(listener =>
             {
                 try
                 {
-                    ListenSocket = CreateListenSocket();
+                    listener.ListenSocket = listener.CreateListenSocket();
                     tcs.SetResult(0);
                 }
                 catch (Exception ex)
                 {
                     tcs.SetException(ex);
                 }
-            }, null);
+            }, this);
             return tcs.Task;
         }
 
@@ -86,11 +86,11 @@ namespace Microsoft.AspNet.Server.Kestrel.Http
             {
                 var tcs = new TaskCompletionSource<int>();
                 Thread.Post(
-                    _ =>
+                    listener =>
                     {
                         try
                         {
-                            ListenSocket.Dispose();
+                            listener.ListenSocket.Dispose();
                             tcs.SetResult(0);
                         }
                         catch (Exception ex)
@@ -98,7 +98,7 @@ namespace Microsoft.AspNet.Server.Kestrel.Http
                             tcs.SetException(ex);
                         }
                     },
-                    null);
+                    this);
 
                 // REVIEW: Should we add a timeout here to be safe?
                 tcs.Task.Wait();

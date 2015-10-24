@@ -152,7 +152,7 @@ namespace Microsoft.AspNet.Server.Kestrel
             {
                 _workAdding.Enqueue(new Work
                 {
-                    CallbackAdapter = (state1, state2) => ((Action<T>)state1).Invoke((T)state2),
+                    CallbackAdapter = CallbackAdapter<T>,
                     Callback = callback,
                     State = state,
                     Completion = tcs
@@ -160,6 +160,11 @@ namespace Microsoft.AspNet.Server.Kestrel
             }
             _post.Send();
             return tcs.Task;
+        }
+
+        private static void CallbackAdapter<T>(object state1, object state2)
+        {
+            ((Action<T>)state1).Invoke((T)state2);
         }
 
         public void Send(Action<object> callback, object state)
