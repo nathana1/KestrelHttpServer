@@ -241,13 +241,14 @@ namespace Microsoft.AspNet.Server.Kestrel.Http
                 buffer,
                 (error, state, calledInline) =>
                 {
+                    var tcs2 = (TaskCompletionSource<int>)state;
                     if (error != null)
                     {
-                        tcs.SetException(error);
+                        tcs2.SetException(error);
                     }
                     else
                     {
-                        tcs.SetResult(0);
+                        tcs2.SetResult(0);
                     }
                 },
                 tcs,

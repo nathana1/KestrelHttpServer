@@ -12,8 +12,8 @@ namespace Microsoft.AspNet.Server.Kestrel.Http
 {
     public class Connection : ConnectionContext, IConnectionControl
     {
-        private static readonly Action<UvStreamHandle, int, object> _readCallback = ReadCallback;
-        private static readonly Func<UvStreamHandle, int, object, Libuv.uv_buf_t> _allocCallback = AllocCallback;
+        private static readonly Action<UvStreamHandle, int, object> _readCallback = (handle, status, state) => ReadCallback(handle, status, state);
+        private static readonly Func<UvStreamHandle, int, object, Libuv.uv_buf_t> _allocCallback = (handle, size, state) => AllocCallback(handle, size, state);
 
         private static long _lastConnectionId;
 

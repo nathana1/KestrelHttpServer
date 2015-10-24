@@ -35,19 +35,20 @@ namespace Microsoft.AspNet.Server.Kestrel.Http
             DispatchPipe = new UvPipeHandle(Log);
 
             var tcs = new TaskCompletionSource<int>();
-            Thread.Post(_ =>
+            Thread.Post(listener =>
             {
                 try
                 {
-                    DispatchPipe.Init(Thread.Loop, true);
-                    var connect = new UvConnectRequest(Log);
-                    connect.Init(Thread.Loop);
+                    listener.DispatchPipe.Init(listener.Thread.Loop, true);
+                    var connect = new UvConnectRequest(listener.Log);
+                    connect.Init(listener.Thread.Loop);
                     connect.Connect(
-                        DispatchPipe,
+                        listener.DispatchPipe,
                         pipeName,
                         (connect2, status, error, state) =>
                         {
-                            connect.Dispose();
+                            var listener2 = (ListenerSecondary)state;
+                            connect2.Dispose();
                             if (error != null)
                             {
                                 tcs.SetException(error);
@@ -57,65 +58,66 @@ namespace Microsoft.AspNet.Server.Kestrel.Http
                             try
                             {
                                 var ptr = Marshal.AllocHGlobal(4);
-                                var buf = Thread.Loop.Libuv.buf_init(ptr, 4);
+                                var buf = listener2.Thread.Loop.Libuv.buf_init(ptr, 4);
 
-                                DispatchPipe.ReadStart(
-                                    (_1, _2, _3) => buf,
-                                    (_1, status2, state2) =>
+                                listener2.DispatchPipe.ReadStart(
+                                    (handle, status2, state2) => buf,
+                                    (handle, status2, state2) =>
                                     {
+                                        var listener3 = (ListenerSecondary)state2;
                                         if (status2 < 0)
                                         {
                                             if (status2 != Constants.EOF)
                                             {
                                                 Exception ex;
-                                                Thread.Loop.Libuv.Check(status2, out ex);
-                                                Log.LogError("DispatchPipe.ReadStart", ex);
+                                                listener3.Thread.Loop.Libuv.Check(status2, out ex);
+                                                listener3.Log.LogError("DispatchPipe.ReadStart", ex);
                                             }
 
-                                            DispatchPipe.Dispose();
+                                            listener3.DispatchPipe.Dispose();
                                             Marshal.FreeHGlobal(ptr);
                                             return;
                                         }
 
-                                        if (DispatchPipe.PendingCount() == 0)
+                                        if (listener3.DispatchPipe.PendingCount() == 0)
                                         {
                                             return;
                                         }
 
-                                        var acceptSocket = CreateAcceptSocket();
+                                        var acceptSocket = listener3.CreateAcceptSocket();
 
                                         try
                                         {
-                                            DispatchPipe.Accept(acceptSocket);
+                                            listener3.DispatchPipe.Accept(acceptSocket);
                                         }
                                         catch (UvException ex)
                                         {
-                                            Log.LogError("DispatchPipe.Accept", ex);
+                                            listener3.Log.LogError("DispatchPipe.Accept", ex);
                                             acceptSocket.Dispose();
                                             return;
                                         }
 
-                                        var connection = new Connection(this, acceptSocket);
+                                        var connection = new Connection(listener3, acceptSocket);
                                         connection.Start();
                                     },
-                                    null);
+                                    listener2);
 
                                 tcs.SetResult(0);
                             }
                             catch (Exception ex)
                             {
-                                DispatchPipe.Dispose();
+                                listener2.DispatchPipe.Dispose();
                                 tcs.SetException(ex);
                             }
                         },
-                        null);
+                        listener);
                 }
                 catch (Exception ex)
                 {
-                    DispatchPipe.Dispose();
+                    listener.DispatchPipe.Dispose();
                     tcs.SetException(ex);
                 }
-            }, null);
+            }, this);
             return tcs.Task;
         }
 
