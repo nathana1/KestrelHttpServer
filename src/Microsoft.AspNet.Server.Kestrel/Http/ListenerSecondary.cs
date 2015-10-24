@@ -22,7 +22,7 @@ namespace Microsoft.AspNet.Server.Kestrel.Http
 
         UvPipeHandle DispatchPipe { get; set; }
 
-        public Task StartAsync(
+        public async Task StartAsync(
             string pipeName,
             ServerAddress address,
             KestrelThread thread,
@@ -34,24 +34,26 @@ namespace Microsoft.AspNet.Server.Kestrel.Http
 
             DispatchPipe = new UvPipeHandle(Log);
 
-            var tcs = new TaskCompletionSource<int>();
-            Thread.Post(listener =>
+            var qscs = new QuadStateCompletionSource<ListenerSecondary, string, IntPtr, Libuv.uv_buf_t, int>(this, pipeName);
+            Thread.Post(qscs2 =>
             {
                 try
                 {
+                    var listener = qscs2.State1;
                     listener.DispatchPipe.Init(listener.Thread.Loop, true);
                     var connect = new UvConnectRequest(listener.Log);
                     connect.Init(listener.Thread.Loop);
                     connect.Connect(
                         listener.DispatchPipe,
-                        pipeName,
+                        qscs2.State2,
                         (connect2, status, error, state) =>
                         {
-                            var listener2 = (ListenerSecondary)state;
+                            var qscs3 = (QuadStateCompletionSource<ListenerSecondary, string, IntPtr, Libuv.uv_buf_t, int>)state;
+                            var listener2 = qscs3.State1;
                             connect2.Dispose();
                             if (error != null)
                             {
-                                tcs.SetException(error);
+                                qscs3.SetException(error);
                                 return;
                             }
 
@@ -60,11 +62,15 @@ namespace Microsoft.AspNet.Server.Kestrel.Http
                                 var ptr = Marshal.AllocHGlobal(4);
                                 var buf = listener2.Thread.Loop.Libuv.buf_init(ptr, 4);
 
+                                qscs3.State3 = ptr;
+                                qscs3.State4 = buf;
+
                                 listener2.DispatchPipe.ReadStart(
-                                    (handle, status2, state2) => buf,
+                                    (handle, status2, state2) => ((QuadStateCompletionSource<ListenerSecondary, string, IntPtr, Libuv.uv_buf_t, int>)state2).State4,
                                     (handle, status2, state2) =>
                                     {
-                                        var listener3 = (ListenerSecondary)state2;
+                                        var qscs4 = (QuadStateCompletionSource<ListenerSecondary, string, IntPtr, Libuv.uv_buf_t, int>)state2;
+                                        var listener3 = qscs4.State1;
                                         if (status2 < 0)
                                         {
                                             if (status2 != Constants.EOF)
@@ -75,7 +81,7 @@ namespace Microsoft.AspNet.Server.Kestrel.Http
                                             }
 
                                             listener3.DispatchPipe.Dispose();
-                                            Marshal.FreeHGlobal(ptr);
+                                            Marshal.FreeHGlobal(qscs4.State3);
                                             return;
                                         }
 
@@ -100,25 +106,26 @@ namespace Microsoft.AspNet.Server.Kestrel.Http
                                         var connection = new Connection(listener3, acceptSocket);
                                         connection.Start();
                                     },
-                                    listener2);
+                                    qscs3);
 
-                                tcs.SetResult(0);
+                                qscs3.SetResult(0);
                             }
                             catch (Exception ex)
                             {
                                 listener2.DispatchPipe.Dispose();
-                                tcs.SetException(ex);
+                                qscs3.SetException(ex);
                             }
                         },
-                        listener);
+                        qscs2);
                 }
                 catch (Exception ex)
                 {
-                    listener.DispatchPipe.Dispose();
-                    tcs.SetException(ex);
+                    qscs2.State1.DispatchPipe.Dispose();
+                    qscs2.SetException(ex);
                 }
-            }, this);
-            return tcs.Task;
+            }, qscs);
+            await qscs;
+            return;
         }
 
         /// <summary>

@@ -260,7 +260,7 @@ namespace Microsoft.AspNet.Server.Kestrel.Http
             }
         }
 
-        Task ISocketOutput.WriteAsync(ArraySegment<byte> buffer, bool immediate, CancellationToken cancellationToken)
+        async Task ISocketOutput.WriteAsync(ArraySegment<byte> buffer, bool immediate, CancellationToken cancellationToken)
         {
             if (!immediate)
             {
@@ -271,48 +271,31 @@ namespace Microsoft.AspNet.Server.Kestrel.Http
                     (error, state, calledInline) => { },
                     null,
                     immediate: false);
-                return TaskUtilities.CompletedTask;
+                return;
             }
 
             // TODO: Optimize task being used, and remove callback model from the underlying Write
-            var tcs = new TaskCompletionSource<int>();
+            var cs = new CompletionSource<int>();
 
             Write(
                 buffer,
                 (error, state, calledInline) =>
                 {
-                    if (!calledInline)
+                    var cs2 = (CompletionSource<int>)state;
+                    if (error != null)
                     {
-                        ThreadPool.QueueUserWorkItem(state2 =>
-                        {
-                            var tcs2 = (TaskCompletionSource<int>)state2;
-                            if (error != null)
-                            {
-                                tcs2.SetException(error);
-                            }
-                            else
-                            {
-                                tcs2.SetResult(0);
-                            }
-                        }, state);
+                        cs2.SetException(error);
                     }
                     else
                     {
-                        var tcs2 = (TaskCompletionSource<int>)state;
-                        if (error != null)
-                        {
-                            tcs2.SetException(error);
-                        }
-                        else
-                        {
-                            tcs2.SetResult(0);
-                        }
+                        cs2.SetResult(0);
                     }
                 },
-                tcs,
+                cs,
                 immediate: true);
 
-            return tcs.Task;
+            await cs;
+            return;
         }
 
         private class CallbackContext

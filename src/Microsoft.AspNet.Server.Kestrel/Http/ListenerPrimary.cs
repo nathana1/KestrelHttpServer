@@ -35,7 +35,7 @@ namespace Microsoft.AspNet.Server.Kestrel.Http
             KestrelThread thread,
             Func<Frame, Task> application)
         {
-            await StartAsync(address, thread, application).ConfigureAwait(false);
+            await StartAsync(address, thread, application);
 
             await Thread.PostAsync(listener =>
             {

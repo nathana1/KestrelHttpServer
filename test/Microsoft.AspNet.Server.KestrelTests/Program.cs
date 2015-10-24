@@ -14,7 +14,6 @@ namespace Microsoft.AspNet.Server.KestrelTests
         private readonly IApplicationEnvironment env;
         private readonly IServiceProvider sp;
         private readonly ILibraryManager _libraryManager;
-        private readonly IApplicationShutdown _shutdown;
 
         public Program(
             IApplicationEnvironment env,
@@ -28,7 +27,7 @@ namespace Microsoft.AspNet.Server.KestrelTests
 
         public int Main()
         {
-            return new Xunit.Runner.Dnx.Program(env, sp, _libraryManager, _shutdown).Main(new string[]
+            return new Xunit.Runner.Dnx.Program(env, sp, _libraryManager).Main(new string[]
             {
                 "-class",
                 typeof(MultipleLoopTests).FullName
