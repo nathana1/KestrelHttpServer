@@ -2,7 +2,6 @@
 // Licensed under the Apache License, Version 2.0. See License.txt in the project root for license information.
 
 using System;
-using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using Microsoft.AspNet.Server.Kestrel.Infrastructure;
 using Microsoft.Extensions.Logging;
@@ -14,15 +13,16 @@ namespace Microsoft.AspNet.Server.Kestrel.Networking
     /// </summary>
     public class UvWriteReq : UvRequest
     {
-        private readonly static Libuv.uv_write_cb _uv_write_cb = (ptr, staus) => UvWriteCb(ptr, staus);
+        private readonly static Libuv.uv_write_cb _uv_write_cb = (ptr, status) => UvWriteCb(ptr, status);
 
         private IntPtr _bufs;
 
-        private Action<UvWriteReq, int, Exception, object> _callback;
+        private Action<UvWriteReq, int, Exception, int, object> _callback;
         private object _state;
-        private const int BUFFER_COUNT = 4;
+        public const int BUFFER_COUNT = 4;
 
-        private List<GCHandle> _pins = new List<GCHandle>();
+        private ArraySegment<MemoryPoolBlock2> _buffers;
+        private GCHandle _pin;
 
         public UvWriteReq(IKestrelTrace logger) : base(logger)
         {
@@ -41,36 +41,26 @@ namespace Microsoft.AspNet.Server.Kestrel.Networking
 
         public unsafe void Write(
             UvStreamHandle handle,
-            ArraySegment<ArraySegment<byte>> bufs,
-            Action<UvWriteReq, int, Exception, object> callback,
+            ArraySegment<MemoryPoolBlock2> bufs,
+            Action<UvWriteReq, int, Exception, int, object> callback,
             object state)
         {
             try
             {
+                _buffers = bufs;
                 // add GCHandle to keeps this SafeHandle alive while request processing
-                _pins.Add(GCHandle.Alloc(this, GCHandleType.Normal));
+                _pin = GCHandle.Alloc(this, GCHandleType.Normal);
 
                 var pBuffers = (Libuv.uv_buf_t*)_bufs;
                 var nBuffers = bufs.Count;
-                if (nBuffers > BUFFER_COUNT)
-                {
-                    // create and pin buffer array when it's larger than the pre-allocated one
-                    var bufArray = new Libuv.uv_buf_t[nBuffers];
-                    var gcHandle = GCHandle.Alloc(bufArray, GCHandleType.Pinned);
-                    _pins.Add(gcHandle);
-                    pBuffers = (Libuv.uv_buf_t*)gcHandle.AddrOfPinnedObject();
-                }
 
                 for (var index = 0; index < nBuffers; index++)
                 {
                     // create and pin each segment being written
                     var buf = bufs.Array[bufs.Offset + index];
-
-                    var gcHandle = GCHandle.Alloc(buf.Array, GCHandleType.Pinned);
-                    _pins.Add(gcHandle);
                     pBuffers[index] = Libuv.buf_init(
-                        gcHandle.AddrOfPinnedObject() + buf.Offset,
-                        buf.Count);
+                        buf.Pin(),
+                        buf.End - buf.Start);
                 }
 
                 _callback = callback;
@@ -88,37 +78,27 @@ namespace Microsoft.AspNet.Server.Kestrel.Networking
 
         public unsafe void Write2(
             UvStreamHandle handle,
-            ArraySegment<ArraySegment<byte>> bufs,
+            ArraySegment<MemoryPoolBlock2> bufs,
             UvStreamHandle sendHandle,
-            Action<UvWriteReq, int, Exception, object> callback,
+            Action<UvWriteReq, int, Exception, int, object> callback,
             object state)
         {
             try
             {
+                _buffers = bufs;
                 // add GCHandle to keeps this SafeHandle alive while request processing
-                _pins.Add(GCHandle.Alloc(this, GCHandleType.Normal));
+                _pin = GCHandle.Alloc(this, GCHandleType.Normal);
 
                 var pBuffers = (Libuv.uv_buf_t*)_bufs;
                 var nBuffers = bufs.Count;
-                if (nBuffers > BUFFER_COUNT)
-                {
-                    // create and pin buffer array when it's larger than the pre-allocated one
-                    var bufArray = new Libuv.uv_buf_t[nBuffers];
-                    var gcHandle = GCHandle.Alloc(bufArray, GCHandleType.Pinned);
-                    _pins.Add(gcHandle);
-                    pBuffers = (Libuv.uv_buf_t*)gcHandle.AddrOfPinnedObject();
-                }
 
                 for (var index = 0; index < nBuffers; index++)
                 {
-                    // create and pin each segment being written
                     var buf = bufs.Array[bufs.Offset + index];
 
-                    var gcHandle = GCHandle.Alloc(buf.Array, GCHandleType.Pinned);
-                    _pins.Add(gcHandle);
                     pBuffers[index] = Libuv.buf_init(
-                        gcHandle.AddrOfPinnedObject() + buf.Offset,
-                        buf.Count);
+                        buf.Pin(),
+                        buf.End - buf.Start);
                 }
 
                 _callback = callback;
@@ -136,17 +116,29 @@ namespace Microsoft.AspNet.Server.Kestrel.Networking
 
         private static void Unpin(UvWriteReq req)
         {
-            foreach (var pin in req._pins)
-            {
-                pin.Free();
-            }
-            req._pins.Clear();
+            req._pin.Free();
         }
 
         private static void UvWriteCb(IntPtr ptr, int status)
         {
             var req = FromIntPtr<UvWriteReq>(ptr);
             Unpin(req);
+
+            var bytesWritten = 0;
+            
+            var end = req._buffers.Offset + req._buffers.Count;
+            for (var i = req._buffers.Offset; i < end; i++)
+            {
+                var block = req._buffers.Array[i];
+                bytesWritten += block.End - block.Start;
+
+                block.Unpin();
+
+                if (block.Pool != null)
+                {
+                    block.Pool.Return(block);
+                }
+            }
 
             var callback = req._callback;
             req._callback = null;
@@ -162,13 +154,20 @@ namespace Microsoft.AspNet.Server.Kestrel.Networking
 
             try
             {
-                callback(req, status, error, state);
+                callback(req, status, error, bytesWritten, state);
             }
             catch (Exception ex)
             {
                 req._log.LogError("UvWriteCb", ex);
                 throw;
             }
+        }
+
+        public struct WriteBlock
+        {
+            public MemoryPoolBlock2 Block;
+            public IntPtr Memory;
+            public int Length;
         }
     }
 }

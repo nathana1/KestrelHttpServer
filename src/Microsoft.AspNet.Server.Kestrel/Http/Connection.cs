@@ -36,7 +36,7 @@ namespace Microsoft.AspNet.Server.Kestrel.Http
             _connectionId = Interlocked.Increment(ref _lastConnectionId);
 
             _rawSocketInput = new SocketInput(Memory2);
-            _rawSocketOutput = new SocketOutput(Thread, _socket, _connectionId, Log);
+            _rawSocketOutput = new SocketOutput(Memory2, Thread, _socket, _connectionId, Log);
         }
 
         public void Start()
