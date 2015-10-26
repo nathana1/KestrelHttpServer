@@ -79,7 +79,7 @@ namespace Microsoft.AspNet.Server.Kestrel.Networking
         {
             Debug.Assert(closed || !IsClosed, "Handle is closed");
             Debug.Assert(!IsInvalid, "Handle is invalid");
-            Debug.Assert(_threadId == Thread.CurrentThread.ManagedThreadId, "ThreadId is incorrect");
+            //Debug.Assert(_threadId == Thread.CurrentThread.ManagedThreadId, "ThreadId is incorrect");
         }
 
         unsafe public static THandle FromIntPtr<THandle>(IntPtr handle)

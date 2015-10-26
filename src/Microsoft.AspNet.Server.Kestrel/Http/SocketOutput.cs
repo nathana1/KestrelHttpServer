@@ -74,6 +74,7 @@ namespace Microsoft.AspNet.Server.Kestrel.Http
             bool socketShutdownSend = false,
             bool socketDisconnect = false)
         {
+
             var input = buffer.Array;
             var remaining = buffer.Count;
             _bytesQueued += remaining;
@@ -164,8 +165,12 @@ namespace Microsoft.AspNet.Server.Kestrel.Http
         private void SendBufferedData()
         {
             Interlocked.Increment(ref _writesPending);
-
+            
+            _currentMemoryBlock = null;
             var mbs = new ArraySegment<MemoryPoolBlock2>(_memoryBlocks, 0, _preparedBuffers);
+
+            _memoryBlocks = new MemoryPoolBlock2[UvWriteReq.BUFFER_COUNT];
+            _preparedBuffers = 0;
 
             var writeReq = new UvWriteReq(_log);
             writeReq.Init(_thread.Loop);
@@ -188,8 +193,6 @@ namespace Microsoft.AspNet.Server.Kestrel.Http
                     }
                 }, this);
 
-            _memoryBlocks = new MemoryPoolBlock2[UvWriteReq.BUFFER_COUNT];
-            _preparedBuffers = 0;
         }
 
 
@@ -232,6 +235,12 @@ namespace Microsoft.AspNet.Server.Kestrel.Http
             _socket.Dispose();
             _log.ConnectionStop(_connectionId);
             OnWriteCompleted();
+
+            if (_currentMemoryBlock != null && _currentMemoryBlock.Pool != null)
+            {
+                _currentMemoryBlock.Pool.Return(_currentMemoryBlock);
+                _currentMemoryBlock = null;
+            }
         }
 
         public void End(ProduceEndType endType)

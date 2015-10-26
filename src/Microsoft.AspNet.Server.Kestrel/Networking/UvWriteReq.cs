@@ -5,6 +5,7 @@ using System;
 using System.Runtime.InteropServices;
 using Microsoft.AspNet.Server.Kestrel.Infrastructure;
 using Microsoft.Extensions.Logging;
+using System.Threading;
 
 namespace Microsoft.AspNet.Server.Kestrel.Networking
 {
@@ -56,10 +57,11 @@ namespace Microsoft.AspNet.Server.Kestrel.Networking
 
                 for (var index = 0; index < nBuffers; index++)
                 {
-                    // create and pin each segment being written
                     var buf = bufs.Array[bufs.Offset + index];
+                    var len = buf.End - buf.Start;
+                    // create and pin each segment being written
                     pBuffers[index] = Libuv.buf_init(
-                        buf.Pin(),
+                        buf.Pin() - len,
                         buf.End - buf.Start);
                 }
 
@@ -72,6 +74,7 @@ namespace Microsoft.AspNet.Server.Kestrel.Networking
                 _callback = null;
                 _state = null;
                 Unpin(this);
+                ProcessBlocks(this);
                 throw;
             }
         }
@@ -95,9 +98,10 @@ namespace Microsoft.AspNet.Server.Kestrel.Networking
                 for (var index = 0; index < nBuffers; index++)
                 {
                     var buf = bufs.Array[bufs.Offset + index];
+                    var len = buf.End - buf.Start;
 
                     pBuffers[index] = Libuv.buf_init(
-                        buf.Pin(),
+                        buf.Pin() - len,
                         buf.End - buf.Start);
                 }
 
@@ -110,6 +114,7 @@ namespace Microsoft.AspNet.Server.Kestrel.Networking
                 _callback = null;
                 _state = null;
                 Unpin(this);
+                ProcessBlocks(this);
                 throw;
             }
         }
@@ -119,26 +124,15 @@ namespace Microsoft.AspNet.Server.Kestrel.Networking
             req._pin.Free();
         }
 
-        private static void UvWriteCb(IntPtr ptr, int status)
+        private static void UvWriteCbThreadPoolNoError(object state)
         {
-            var req = FromIntPtr<UvWriteReq>(ptr);
-            Unpin(req);
+            var req = (UvWriteReq)state;
+            UvWriteCbThreadPool(req, 0);
+        }
 
-            var bytesWritten = 0;
-            
-            var end = req._buffers.Offset + req._buffers.Count;
-            for (var i = req._buffers.Offset; i < end; i++)
-            {
-                var block = req._buffers.Array[i];
-                bytesWritten += block.End - block.Start;
-
-                block.Unpin();
-
-                if (block.Pool != null)
-                {
-                    block.Pool.Return(block);
-                }
-            }
+        private static void UvWriteCbThreadPool(UvWriteReq req, int status)
+        {
+            var bytesWritten = ProcessBlocks(req);
 
             var callback = req._callback;
             req._callback = null;
@@ -160,6 +154,44 @@ namespace Microsoft.AspNet.Server.Kestrel.Networking
             {
                 req._log.LogError("UvWriteCb", ex);
                 throw;
+            }
+        }
+
+        private static int ProcessBlocks(UvWriteReq req)
+        {
+            var bytesWritten = 0;
+            var end = req._buffers.Offset + req._buffers.Count;
+            for (var i = req._buffers.Offset; i < end; i++)
+            {
+                var block = req._buffers.Array[i];
+                bytesWritten += block.End - block.Start;
+
+                block.Unpin();
+
+                if (block.Pool != null)
+                {
+                    block.Pool.Return(block);
+                }
+            }
+
+            return bytesWritten;
+        }
+
+        private static void UvWriteCb(IntPtr ptr, int status)
+        {
+            var req = FromIntPtr<UvWriteReq>(ptr);
+            if (req._pin != null)
+            {
+                Unpin(req);
+
+                if (status >= 0)
+                {
+                    ThreadPool.QueueUserWorkItem((r) => UvWriteCbThreadPoolNoError(r), req);
+                }
+                else
+                {
+                    ThreadPool.QueueUserWorkItem((r) => UvWriteCbThreadPool((UvWriteReq)r, status), req);
+                }
             }
         }
 
