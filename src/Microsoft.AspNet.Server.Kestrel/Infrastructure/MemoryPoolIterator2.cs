@@ -10,6 +10,7 @@ namespace Microsoft.AspNet.Server.Kestrel.Infrastructure
 {
     public struct MemoryPoolIterator2
     {
+        private const int _maxStackAllocBytes = 16384;
         /// <summary>
         /// Array of "minus one" bytes of the length of SIMD operations on the current hardware. Used as an argument in the
         /// vector dot product that counts matching character occurrence.
@@ -23,6 +24,7 @@ namespace Microsoft.AspNet.Server.Kestrel.Infrastructure
         private static Vector<byte> _dotIndex = new Vector<byte>(Enumerable.Range(0, Vector<byte>.Count).Select(x => (byte)-x).ToArray());
 
         private static Encoding _utf8 = Encoding.UTF8;
+        private static Encoding _ascii = Encoding.ASCII;
 
         private MemoryPoolBlock2 _block;
         private int _index;
@@ -488,7 +490,101 @@ namespace Microsoft.AspNet.Server.Kestrel.Infrastructure
             }
         }
 
-        public string GetString(MemoryPoolIterator2 end)
+        private static unsafe string MultiBlockAsciiString(MemoryPoolBlock2 startBlock, MemoryPoolIterator2 end, int inputOffset, int length)
+        {
+            // avoid declaring other local vars, or doing work with stackalloc
+            // to prevent the .locals init cil flag , see: https://github.com/dotnet/coreclr/issues/1279
+            char* output = stackalloc char[length];
+
+            return MultiBlockAsciiIter(output, startBlock, end, inputOffset, length);
+        }
+
+        private static unsafe string MultiBlockAsciiIter(char* output, MemoryPoolBlock2 startBlock, MemoryPoolIterator2 end, int inputOffset, int length)
+        {
+            var outputOffset = 0;
+            var block = startBlock;
+            var remaining = length;
+
+            while(true)
+            {
+                int following = (block != end._block ? block.End : end._index) - inputOffset;
+
+                if (following > 0)
+                {
+                    var input = block.Array;
+                    for (var i = 0; i < following; i++)
+                    {
+                        output[i + outputOffset] = (char)input[i + inputOffset];
+                    }
+
+                    remaining -= following;
+                    outputOffset += following;
+                }
+                
+                if (remaining == 0)
+                {
+                    return new string(output, 0, length);
+                }
+
+                block = block.Next;
+                inputOffset = block.Start;
+            }
+        }
+
+        public string GetAsciiStringHeap(MemoryPoolBlock2 startBlock, MemoryPoolIterator2 end, int inputOffset, int length)
+        {
+            var output = new char[length];
+            var outputOffset = 0;
+            var block = startBlock;
+            var remaining = length;
+
+            while (true)
+            {
+                int following = (block != end._block ? block.End : end._index) - inputOffset;
+
+                if (following > 0)
+                {
+                    var input = block.Array;
+                    for (var i = 0; i < following; i++)
+                    {
+                        output[i + outputOffset] = (char)input[i + inputOffset];
+                    }
+
+                    remaining -= following;
+                    outputOffset += following;
+                }
+
+                if (remaining == 0)
+                {
+                    return new string(output, 0, length); 
+                }
+
+                block = block.Next;
+                inputOffset = block.Start;
+            }
+        }
+
+        public string GetAsciiString(MemoryPoolIterator2 end)
+        {
+            if (IsDefault || end.IsDefault)
+            {
+                return default(string);
+            }
+
+            var length = GetLength(end);
+
+            if (end._block == _block)
+            {
+                return _ascii.GetString(_block.Array, _index, length);
+            }
+            if (length > _maxStackAllocBytes)
+            {
+                return GetAsciiStringHeap(_block, end, _index, length);
+            }
+            return MultiBlockAsciiString(_block, end, _index, length);
+        }
+
+        public string GetUtf8String(MemoryPoolIterator2 end)
         {
             if (IsDefault || end.IsDefault)
             {
