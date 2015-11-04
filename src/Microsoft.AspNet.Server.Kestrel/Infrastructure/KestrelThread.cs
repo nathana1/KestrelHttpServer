@@ -2,7 +2,7 @@
 // Licensed under the Apache License, Version 2.0. See License.txt in the project root for license information.
 
 using System;
-using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Runtime.ExceptionServices;
 using System.Threading;
 using System.Threading.Tasks;
@@ -10,6 +10,7 @@ using Microsoft.AspNet.Hosting;
 using Microsoft.AspNet.Server.Kestrel.Infrastructure;
 using Microsoft.AspNet.Server.Kestrel.Networking;
 using Microsoft.Extensions.Logging;
+using System.Collections.Concurrent;
 
 namespace Microsoft.AspNet.Server.Kestrel
 {
@@ -26,9 +27,12 @@ namespace Microsoft.AspNet.Server.Kestrel
         private Thread _thread;
         private UvLoopHandle _loop;
         private UvAsyncHandle _post;
-        private ConcurrentQueue<Work> _workCurrent = new ConcurrentQueue<Work>();
-        private ConcurrentQueue<CloseHandle> _closeHandlesCurrent = new ConcurrentQueue<CloseHandle>();
-        private ConcurrentQueue<UvWriteReq> _writeRequestPool = new ConcurrentQueue<UvWriteReq>();
+        private Queue<Work> _workAdding = new Queue<Work>();
+        private Queue<Work> _workRunning = new Queue<Work>();
+        private Queue<CloseHandle> _closeHandleAdding = new Queue<CloseHandle>();
+        private Queue<CloseHandle> _closeHandleRunning = new Queue<CloseHandle>();
+        private ConcurrentStack<UvWriteReq> _writeRequestPool = new ConcurrentStack<UvWriteReq>();
+        private object _workSync = new Object();
         private bool _stopImmediate = false;
         private bool _initCompleted = false;
         private ExceptionDispatchInfo _closeError;
@@ -46,7 +50,6 @@ namespace Microsoft.AspNet.Server.Kestrel
         }
 
         public UvLoopHandle Loop { get { return _loop; } }
-
         public ExceptionDispatchInfo FatalError { get { return _closeError; } }
 
         public Action<Action<IntPtr>, IntPtr> QueueCloseHandle { get; internal set; }
@@ -88,17 +91,6 @@ namespace Microsoft.AspNet.Server.Kestrel
 
         private void OnStop(object obj)
         {
-            if (_writeRequestPool != null)
-            {
-                var writeRequests = _writeRequestPool;
-                _writeRequestPool = null;
-
-                UvWriteReq writeReq;
-                while (writeRequests.TryDequeue(out writeReq))
-                {
-                    writeReq.Dispose();
-                }
-            }
             _post.Unreference();
         }
 
@@ -125,36 +117,40 @@ namespace Microsoft.AspNet.Server.Kestrel
 
         public void Post(Action<object> callback, object state)
         {
-            _workCurrent.Enqueue(new Work { CallbackAdapter = _objectCallbackAdapter, Callback = callback, State = state });
-
+            lock (_workSync)
+            {
+                _workAdding.Enqueue(new Work { CallbackAdapter = _objectCallbackAdapter, Callback = callback, State = state });
+            }
             _post.Send();
         }
 
         public void Post<T>(Action<T> callback, T state)
         {
-
-            _workCurrent.Enqueue(new Work
+            lock (_workSync)
             {
-                CallbackAdapter = (callback2, state2) => ((Action<T>)callback2).Invoke((T)state2),
-                Callback = callback,
-                State = state
-            });
-
+                _workAdding.Enqueue(new Work
+                {
+                    CallbackAdapter = (callback2, state2) => ((Action<T>)callback2).Invoke((T)state2),
+                    Callback = callback,
+                    State = state
+                });
+            }
             _post.Send();
         }
 
         public Task PostAsync(Action<object> callback, object state)
         {
             var tcs = new TaskCompletionSource<int>();
-
-            _workCurrent.Enqueue(new Work
+            lock (_workSync)
             {
-                CallbackAdapter = _objectCallbackAdapter,
-                Callback = callback,
-                State = state,
-                Completion = tcs
-            });
-
+                _workAdding.Enqueue(new Work
+                {
+                    CallbackAdapter = _objectCallbackAdapter,
+                    Callback = callback,
+                    State = state,
+                    Completion = tcs
+                });
+            }
             _post.Send();
             return tcs.Task;
         }
@@ -162,15 +158,16 @@ namespace Microsoft.AspNet.Server.Kestrel
         public Task PostAsync<T>(Action<T> callback, T state)
         {
             var tcs = new TaskCompletionSource<int>();
-
-            _workCurrent.Enqueue(new Work
+            lock (_workSync)
             {
-                CallbackAdapter = (state1, state2) => ((Action<T>)state1).Invoke((T)state2),
-                Callback = callback,
-                State = state,
-                Completion = tcs
-            });
-
+                _workAdding.Enqueue(new Work
+                {
+                    CallbackAdapter = (state1, state2) => ((Action<T>)state1).Invoke((T)state2),
+                    Callback = callback,
+                    State = state,
+                    Completion = tcs
+                });
+            }
             _post.Send();
             return tcs.Task;
         }
@@ -189,8 +186,10 @@ namespace Microsoft.AspNet.Server.Kestrel
 
         private void PostCloseHandle(Action<IntPtr> callback, IntPtr handle)
         {
-            _closeHandlesCurrent.Enqueue(new CloseHandle { Callback = callback, Handle = handle });
-            
+            lock (_workSync)
+            {
+                _closeHandleAdding.Enqueue(new CloseHandle { Callback = callback, Handle = handle });
+            }
             _post.Send();
         }
 
@@ -258,9 +257,16 @@ namespace Microsoft.AspNet.Server.Kestrel
 
         private void DoPostWork()
         {
-            Work work;
-            while (_workCurrent.TryDequeue(out work))
+            Queue<Work> queue;
+            lock (_workSync)
             {
+                queue = _workAdding;
+                _workAdding = _workRunning;
+                _workRunning = queue;
+            }
+            while (queue.Count != 0)
+            {
+                var work = queue.Dequeue();
                 try
                 {
                     work.CallbackAdapter(work.Callback, work.State);
@@ -278,7 +284,7 @@ namespace Microsoft.AspNet.Server.Kestrel
                 {
                     if (work.Completion != null)
                     {
-                        ThreadPool.QueueUserWorkItem(tcs => ((TaskCompletionSource<int>)tcs).SetException(ex), work.Completion);
+                        ThreadPool.QueueUserWorkItem(_ => work.Completion.SetException(ex), null);
                     }
                     else
                     {
@@ -290,9 +296,16 @@ namespace Microsoft.AspNet.Server.Kestrel
         }
         private void DoPostCloseHandle()
         {
-            CloseHandle closeHandle;
-            while (_closeHandlesCurrent.TryDequeue(out closeHandle))
+            Queue<CloseHandle> queue;
+            lock (_workSync)
             {
+                queue = _closeHandleAdding;
+                _closeHandleAdding = _closeHandleRunning;
+                _closeHandleRunning = queue;
+            }
+            while (queue.Count != 0)
+            {
+                var closeHandle = queue.Dequeue();
                 try
                 {
                     closeHandle.Callback(closeHandle.Handle);
@@ -310,7 +323,7 @@ namespace Microsoft.AspNet.Server.Kestrel
             UvWriteReq writeReq;
 
             var writeRequests = _writeRequestPool;
-            if (writeRequests == null || !writeRequests.TryDequeue(out writeReq))
+            if (writeRequests == null || !writeRequests.TryPop(out writeReq))
             {
                 writeReq = new UvWriteReq(_log);
                 writeReq.Init(_loop);
@@ -324,7 +337,7 @@ namespace Microsoft.AspNet.Server.Kestrel
             if ((_writeRequestPool?.Count ?? _maxPooledWriteRequests) < _maxPooledWriteRequests)
             {
                 writeReq.Reset();
-                _writeRequestPool.Enqueue(writeReq);
+                _writeRequestPool.Push(writeReq);
             }
             else
             {
