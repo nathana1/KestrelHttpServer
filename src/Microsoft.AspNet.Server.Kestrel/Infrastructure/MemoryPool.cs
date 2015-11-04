@@ -42,13 +42,13 @@ namespace Microsoft.AspNet.Server.Kestrel.Infrastructure
         /// Thread-safe collection of blocks which are currently in the pool. A slab will pre-allocate all of the block tracking objects
         /// and add them to this collection. When memory is requested it is taken from here first, and when it is returned it is re-added.
         /// </summary>
-        private readonly ConcurrentQueue<MemoryPoolBlock> _blocks = new ConcurrentQueue<MemoryPoolBlock>();
+        private readonly ConcurrentStack<MemoryPoolBlock> _blocks = new ConcurrentStack<MemoryPoolBlock>();
 
         /// <summary>
         /// Thread-safe collection of slabs which have been allocated by this pool. As long as a slab is in this collection and slab.IsActive, 
         /// the blocks will be added to _blocks when returned.
         /// </summary>
-        private readonly ConcurrentQueue<MemoryPoolSlab> _slabs = new ConcurrentQueue<MemoryPoolSlab>();
+        private readonly ConcurrentStack<MemoryPoolSlab> _slabs = new ConcurrentStack<MemoryPoolSlab>();
 
         /// <summary>
         /// This is part of implementing the IDisposable pattern.
@@ -77,7 +77,7 @@ namespace Microsoft.AspNet.Server.Kestrel.Infrastructure
             }
 
             MemoryPoolBlock block;
-            if (_blocks.TryDequeue(out block))
+            if (_blocks.TryPop(out block))
             {
                 // block successfully taken from the stack - return it
                 return block;
@@ -94,7 +94,7 @@ namespace Microsoft.AspNet.Server.Kestrel.Infrastructure
         private MemoryPoolBlock AllocateSlab()
         {
             var slab = MemoryPoolSlab.Create(_slabLength);
-            _slabs.Enqueue(slab);
+            _slabs.Push(slab);
 
             var basePtr = slab.ArrayPtr;
             var firstOffset = (int)((_blockStride - 1) - ((ulong)(basePtr + _blockStride - 1) % _blockStride));
@@ -135,7 +135,7 @@ namespace Microsoft.AspNet.Server.Kestrel.Infrastructure
         public void Return(MemoryPoolBlock block)
         {
             block.Reset();
-            _blocks.Enqueue(block);
+            _blocks.Push(block);
         }
 
         protected virtual void Dispose(bool disposing)
@@ -145,7 +145,7 @@ namespace Microsoft.AspNet.Server.Kestrel.Infrastructure
                 if (disposing)
                 {
                     MemoryPoolSlab slab;
-                    while (_slabs.TryDequeue(out slab))
+                    while (_slabs.TryPop(out slab))
                     {
                         // dispose managed state (managed objects).
                         slab.Dispose();
