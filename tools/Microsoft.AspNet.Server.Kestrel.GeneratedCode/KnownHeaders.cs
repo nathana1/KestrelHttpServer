@@ -361,7 +361,7 @@ namespace Microsoft.AspNet.Server.Kestrel.Http
                             else
                             {{
                                 {header.SetBit()};
-                                _{header.Identifier} = new[] {{value}};
+                                _{header.Identifier} = new StringValues(value);
                             }}
                             return;
                         }}
