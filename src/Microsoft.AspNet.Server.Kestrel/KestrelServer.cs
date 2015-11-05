@@ -82,6 +82,10 @@ namespace Microsoft.AspNet.Server.Kestrel
                         "ThreadCount cannot be negative");
                 }
 
+                GC.Collect(2, GCCollectionMode.Forced);
+                GC.WaitForPendingFinalizers(); 
+                GC.Collect(2, GCCollectionMode.Forced);
+
                 engine.Start(information.ThreadCount == 0 ? 1 : information.ThreadCount);
                 var atLeastOneListener = false;
 
