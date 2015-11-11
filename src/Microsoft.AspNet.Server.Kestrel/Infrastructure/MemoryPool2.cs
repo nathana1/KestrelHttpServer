@@ -60,6 +60,13 @@ namespace Microsoft.AspNet.Server.Kestrel.Infrastructure
         /// </summary>
         private readonly ConcurrentStack<MemoryPoolSlab2> _slabs = new ConcurrentStack<MemoryPoolSlab2>();
 
+        public MemoryPool2()
+        {
+            // Allocate on creation or multiple simultaneous connections
+            // will all allocate rather than reuse the pooled buffers
+            Return(AllocateSlab());
+        }
+
         /// <summary>
         /// Called to take a block from the pool.
         /// </summary>
