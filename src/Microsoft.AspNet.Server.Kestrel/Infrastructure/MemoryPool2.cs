@@ -30,6 +30,12 @@ namespace Microsoft.AspNet.Server.Kestrel.Infrastructure
         /// 4096 - 64 gives you a blockLength of 4032 usable bytes per block.
         /// </summary>
         private const int _blockLength = _blockStride - _blockUnused;
+        
+        /// <summary>
+        /// Max allocation block size for pooled blocks, 
+        /// larger values can be leased but they will be disposed after use rather than returned to the pool.
+        /// </summary>
+        public const int MaxPooledBlockLength = _blockLength;
 
         /// <summary>
         /// Max allocation block size for pooled blocks, 
