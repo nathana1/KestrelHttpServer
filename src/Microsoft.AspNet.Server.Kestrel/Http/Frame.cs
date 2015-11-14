@@ -272,12 +272,12 @@ namespace Microsoft.AspNet.Server.Kestrel.Http
 
                             HttpContextFactory.Dispose(httpContext);
 
-                            await ProduceEnd();
-
-                            var block = Memory2.Lease();
+                            var memoryBlock = Memory2.Lease();
                             try
                             {
-                                var segment = block.Data;
+                                await ProduceEnd(memoryBlock);
+
+                                var segment = memoryBlock.Data;
                                 while (await RequestBody.ReadAsync(segment.Array, segment.Offset, segment.Count) != 0)
                                 {
                                     // Finish reading the request body in case the app did not. 
@@ -285,7 +285,7 @@ namespace Microsoft.AspNet.Server.Kestrel.Http
                             }
                             finally
                             {
-                                Memory2.Return(block);
+                                Memory2.Return(memoryBlock);
                             }
                         }
 
@@ -393,19 +393,43 @@ namespace Microsoft.AspNet.Server.Kestrel.Http
 
         public void Flush()
         {
-            ProduceStartAndFireOnStarting(immediate: false).GetAwaiter().GetResult();
+            var memoryBlock = Memory2.Lease();
+            try
+            {
+                ProduceStartAndFireOnStarting(memoryBlock, immediate: false).GetAwaiter().GetResult();
+            }
+            finally
+            {
+                Memory2.Return(memoryBlock);
+            }
             SocketOutput.Write(_emptyData, immediate: true);
         }
 
         public async Task FlushAsync(CancellationToken cancellationToken)
         {
-            await ProduceStartAndFireOnStarting(immediate: false);
+            var memoryBlock = Memory2.Lease();
+            try
+            {
+                await ProduceStartAndFireOnStarting(memoryBlock, immediate: false);
+            }
+            finally
+            {
+                Memory2.Return(memoryBlock);
+            }
             await SocketOutput.WriteAsync(_emptyData, immediate: true, cancellationToken: cancellationToken);
         }
 
         public void Write(ArraySegment<byte> data)
         {
-            ProduceStartAndFireOnStarting(immediate: false).GetAwaiter().GetResult();
+            var memoryBlock = Memory2.Lease();
+            try
+            {
+                ProduceStartAndFireOnStarting(memoryBlock, immediate: false).GetAwaiter().GetResult();
+            }
+            finally
+            {
+                Memory2.Return(memoryBlock);
+            }
 
             if (_autoChunk)
             {
@@ -423,7 +447,15 @@ namespace Microsoft.AspNet.Server.Kestrel.Http
 
         public async Task WriteAsync(ArraySegment<byte> data, CancellationToken cancellationToken)
         {
-            await ProduceStartAndFireOnStarting(immediate: false);
+            var memoryBlock = Memory2.Lease();
+            try
+            {
+                await ProduceStartAndFireOnStarting(memoryBlock, immediate: false);
+            }
+            finally
+            {
+                Memory2.Return(memoryBlock);
+            }
 
             if (_autoChunk)
             {
@@ -506,7 +538,7 @@ namespace Microsoft.AspNet.Server.Kestrel.Http
             }
         }
 
-        public async Task ProduceStartAndFireOnStarting(bool immediate = true)
+        public async Task ProduceStartAndFireOnStarting(MemoryPoolBlock2 memoryBlock, bool immediate = true)
         {
             if (_responseStarted) return;
 
@@ -519,20 +551,23 @@ namespace Microsoft.AspNet.Server.Kestrel.Http
                     _applicationException);
             }
 
-            await ProduceStart(immediate, appCompleted: false);
+            await ProduceStart(memoryBlock, immediate, appCompleted: false);
         }
 
-        private Task ProduceStart(bool immediate, bool appCompleted)
+        private Task ProduceStart(
+            MemoryPoolBlock2 memoryBlock, 
+            bool immediate, 
+            bool appCompleted)
         {
             if (_responseStarted) return TaskUtilities.CompletedTask;
             _responseStarted = true;
 
             var statusBytes = ReasonPhrases.ToStatusBytes(StatusCode, ReasonPhrase);
 
-            return CreateResponseHeader(statusBytes, appCompleted, immediate);
+            return CreateResponseHeader(statusBytes, memoryBlock, appCompleted, immediate);
         }
 
-        private async Task ProduceEnd()
+        private async Task ProduceEnd(MemoryPoolBlock2 memoryBlock)
         {
             if (_applicationException != null)
             {
@@ -552,7 +587,7 @@ namespace Microsoft.AspNet.Server.Kestrel.Http
                 }
             }
 
-            await ProduceStart(immediate: true, appCompleted: true);
+            await ProduceStart(memoryBlock, immediate: true, appCompleted: true);
 
             // _autoChunk should be checked after we are sure ProduceStart() has been called
             // since ProduceStart() may set _autoChunk to true.
@@ -620,95 +655,88 @@ namespace Microsoft.AspNet.Server.Kestrel.Http
 
         private Task CreateResponseHeader(
             byte[] statusBytes,
+            MemoryPoolBlock2 memoryBlock,
             bool appCompleted,
             bool immediate)
         {
-            var memoryBlock = Memory2.Lease();
-            try
+            var blockRemaining = memoryBlock.Data.Count;
+
+            OutputAsciiBlock(_httpVersion == HttpVersionType.Http1_1 ? _bytesHttpVersion1_1 : _bytesHttpVersion1_0, memoryBlock, SocketOutput);
+
+            OutputAsciiBlock(statusBytes, memoryBlock, SocketOutput);
+
+            if (_responseHeaders.HasDefaultDate)
             {
-                var blockRemaining = memoryBlock.Data.Count;
+                OutputAsciiBlock(_bytesDate, memoryBlock, SocketOutput);
+                OutputAsciiBlock(DateHeaderValueManager.GetDateHeaderValueBytes(), memoryBlock, SocketOutput);
+                OutputAsciiBlock(_bytesEndLine, memoryBlock, SocketOutput);
+            }
 
-                OutputAsciiBlock(_httpVersion == HttpVersionType.Http1_1 ? _bytesHttpVersion1_1 : _bytesHttpVersion1_0, memoryBlock, SocketOutput);
-
-                OutputAsciiBlock(statusBytes, memoryBlock, SocketOutput);
-
-                if (_responseHeaders.HasDefaultDate)
+            foreach (var header in _responseHeaders.AsOutputEnumerable())
+            {
+                foreach (var value in header.Value)
                 {
-                    OutputAsciiBlock(_bytesDate, memoryBlock, SocketOutput);
-                    OutputAsciiBlock(DateHeaderValueManager.GetDateHeaderValueBytes(), memoryBlock, SocketOutput);
+                    OutputAsciiBlock(header.Key, memoryBlock, SocketOutput);
+                    OutputAsciiBlock(value, memoryBlock, SocketOutput);
                     OutputAsciiBlock(_bytesEndLine, memoryBlock, SocketOutput);
-                }
 
-                foreach (var header in _responseHeaders.AsOutputEnumerable())
-                {
-                    foreach (var value in header.Value)
+                    if (_responseHeaders.HasConnection && value.IndexOf("close", StringComparison.OrdinalIgnoreCase) != -1)
                     {
-                        OutputAsciiBlock(header.Key, memoryBlock, SocketOutput);
-                        OutputAsciiBlock(value, memoryBlock, SocketOutput);
-                        OutputAsciiBlock(_bytesEndLine, memoryBlock, SocketOutput);
-
-                        if (_responseHeaders.HasConnection && value.IndexOf("close", StringComparison.OrdinalIgnoreCase) != -1)
-                        {
-                            _keepAlive = false;
-                        }
+                        _keepAlive = false;
                     }
                 }
+            }
 
-                if (_responseHeaders.HasDefaultServer)
-                {
-                    OutputAsciiBlock(_bytesServer, memoryBlock, SocketOutput);
-                }
+            if (_responseHeaders.HasDefaultServer)
+            {
+                OutputAsciiBlock(_bytesServer, memoryBlock, SocketOutput);
+            }
 
-                if (_keepAlive && !_responseHeaders.HasTransferEncoding && !_responseHeaders.HasContentLength)
+            if (_keepAlive && !_responseHeaders.HasTransferEncoding && !_responseHeaders.HasContentLength)
+            {
+                if (appCompleted)
                 {
-                    if (appCompleted)
+                    // Don't set the Content-Length or Transfer-Encoding headers
+                    // automatically for HEAD requests or 101, 204, 205, 304 responses.
+                    if (Method != "HEAD" && StatusCanHaveBody(StatusCode))
                     {
-                        // Don't set the Content-Length or Transfer-Encoding headers
-                        // automatically for HEAD requests or 101, 204, 205, 304 responses.
-                        if (Method != "HEAD" && StatusCanHaveBody(StatusCode))
-                        {
-                            // Since the app has completed and we are only now generating
-                            // the headers we can safely set the Content-Length to 0.
-                            OutputAsciiBlock(_bytesContentLengthZero, memoryBlock, SocketOutput);
-                        }
+                        // Since the app has completed and we are only now generating
+                        // the headers we can safely set the Content-Length to 0.
+                        OutputAsciiBlock(_bytesContentLengthZero, memoryBlock, SocketOutput);
                     }
-                    else
-                    {
-                        if (_httpVersion == HttpVersionType.Http1_1)
-                        {
-                            _autoChunk = true;
-                            OutputAsciiBlock(_bytesTransferEncodingChunked, memoryBlock, SocketOutput);
-                        }
-                        else
-                        {
-                            _keepAlive = false;
-                        }
-                    }
-                }
-
-                if (_keepAlive == false && _responseHeaders.HasConnection == false && _httpVersion == HttpVersionType.Http1_1)
-                {
-                    OutputAsciiBlock(_bytesConnectionClose, memoryBlock, SocketOutput);
-                }
-                else if (_keepAlive && _responseHeaders.HasConnection == false && _httpVersion == HttpVersionType.Http1_0)
-                {
-                    OutputAsciiBlock(_bytesConnectionKeepAlive, memoryBlock, SocketOutput);
                 }
                 else
                 {
-                    OutputAsciiBlock(_bytesEndLine, memoryBlock, SocketOutput);
+                    if (_httpVersion == HttpVersionType.Http1_1)
+                    {
+                        _autoChunk = true;
+                        OutputAsciiBlock(_bytesTransferEncodingChunked, memoryBlock, SocketOutput);
+                    }
+                    else
+                    {
+                        _keepAlive = false;
+                    }
                 }
+            }
 
-                return SocketOutput.WriteAsync(
-                    (memoryBlock.Start == memoryBlock.End) ?
-                    default(ArraySegment<byte>) :
-                    new ArraySegment<byte>(memoryBlock.Array, memoryBlock.Start, memoryBlock.End - memoryBlock.Start),
-                    immediate);
-            }
-            finally
+            if (_keepAlive == false && _responseHeaders.HasConnection == false && _httpVersion == HttpVersionType.Http1_1)
             {
-                Memory2.Return(memoryBlock);
+                OutputAsciiBlock(_bytesConnectionClose, memoryBlock, SocketOutput);
             }
+            else if (_keepAlive && _responseHeaders.HasConnection == false && _httpVersion == HttpVersionType.Http1_0)
+            {
+                OutputAsciiBlock(_bytesConnectionKeepAlive, memoryBlock, SocketOutput);
+            }
+            else
+            {
+                OutputAsciiBlock(_bytesEndLine, memoryBlock, SocketOutput);
+            }
+
+            return SocketOutput.WriteAsync(
+                (memoryBlock.Start == memoryBlock.End) ?
+                default(ArraySegment<byte>) :
+                new ArraySegment<byte>(memoryBlock.Array, memoryBlock.Start, memoryBlock.End - memoryBlock.Start),
+                immediate);
         }
 
         private bool TakeStartLine(SocketInput input)
