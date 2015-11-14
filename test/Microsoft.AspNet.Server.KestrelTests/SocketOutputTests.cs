@@ -65,7 +65,7 @@ namespace Microsoft.AspNet.Server.KestrelTests
         public void WritesDontCompleteImmediatelyWhenTooManyBytesAreAlreadyPreCompleted()
         {
             // This should match _maxBytesPreCompleted in SocketOutput
-            var maxBytesPreCompleted = 65536;
+            var maxBytesPreCompleted = 64512;
             var completeQueue = new Queue<Action<int>>();
 
             // Arrange
@@ -120,7 +120,7 @@ namespace Microsoft.AspNet.Server.KestrelTests
         public void WritesDontCompleteImmediatelyWhenTooManyBytesIncludingNonImmediateAreAlreadyPreCompleted()
         {
             // This should match _maxBytesPreCompleted in SocketOutput
-            var maxBytesPreCompleted = 65536;
+            var maxBytesPreCompleted = 64512;
             var completeQueue = new Queue<Action<int>>();
 
             // Arrange
@@ -196,7 +196,7 @@ namespace Microsoft.AspNet.Server.KestrelTests
         public void WritesDontGetCompletedTooQuickly()
         {
             // This should match _maxBytesPreCompleted in SocketOutput
-            var maxBytesPreCompleted = 65536;
+            var maxBytesPreCompleted = 64512;
             var completeQueue = new Queue<Action<int>>();
             var onWriteWh = new ManualResetEventSlim();
 

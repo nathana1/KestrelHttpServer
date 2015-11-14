@@ -21,10 +21,6 @@ namespace Microsoft.AspNet.Server.Kestrel.Http
         private int _dispatchIndex;
         private string _pipeName;
 
-        // this message is passed to write2 because it must be non-zero-length, 
-        // but it has no other functional significance
-        private readonly ArraySegment<ArraySegment<byte>> _dummyMessage = new ArraySegment<ArraySegment<byte>>(new[] { new ArraySegment<byte>(new byte[] { 1, 2, 3, 4 }) });
-
         protected ListenerPrimary(ServiceContext serviceContext) : base(serviceContext)
         {
         }
@@ -88,11 +84,10 @@ namespace Microsoft.AspNet.Server.Kestrel.Http
             else
             {
                 var dispatchPipe = _dispatchPipes[index];
-                var write = new UvWriteReq(Log);
+                var write = new UvWrite2Req(Log);
                 write.Init(Thread.Loop);
                 write.Write2(
                     dispatchPipe,
-                    _dummyMessage,
                     socket,
                     (write2, status, error, state) => 
                     {

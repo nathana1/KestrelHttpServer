@@ -199,14 +199,26 @@ namespace Microsoft.AspNet.Server.KestrelTests
                         {
                             for (var x = 0; x < 2; x++)
                             {
+                                var memory2 = new MemoryPool2();
+                                var block = memory2.Lease();
+                                block.Array[block.Data.Offset] = 65;
+                                block.Array[block.Data.Offset + 1] = 66;
+                                block.Array[block.Data.Offset + 2] = 67;
+                                block.Array[block.Data.Offset + 3] = 68;
+                                block.Array[block.Data.Offset + 3] = 69;
+                                block.End += 5;
+
+                                var bufferArray = new[] { block };
+
                                 var req = new UvWriteReq(new KestrelTrace(new TestKestrelTrace()));
-                                req.Init(loop);
+                                req.Init(loop, bufferArray);
                                 req.Write(
                                     tcp2,
-                                    new ArraySegment<ArraySegment<byte>>(
-                                        new[] { new ArraySegment<byte>(new byte[] { 65, 66, 67, 68, 69 }) }
-                                        ),
-                                    (_1, _2, _3, _4) => { },
+                                    1,
+                                    (_1, _2, _3, _4) => {
+                                        memory2.Return(block);
+                                        memory2.Dispose();
+                                    },
                                     null);
                             }
                         }

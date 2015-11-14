@@ -62,13 +62,25 @@ namespace Microsoft.AspNet.Server.KestrelTests
                     return;
                 }
 
+                var memory2 = new MemoryPool2();
+                var block = memory2.Lease();
+                block.Array[block.Data.Offset] = 1;
+                block.Array[block.Data.Offset + 1] = 2;
+                block.Array[block.Data.Offset + 2] = 3;
+                block.Array[block.Data.Offset + 3] = 4;
+                block.End += 4;
+
+                var bufferArray = new[] { block };
+
                 var writeRequest = new UvWriteReq(new KestrelTrace(new TestKestrelTrace()));
-                writeRequest.Init(loop);
+                writeRequest.Init(loop, bufferArray);
                 writeRequest.Write(
                     serverConnectionPipe,
-                    new ArraySegment<ArraySegment<byte>>(new ArraySegment<byte>[] { new ArraySegment<byte>(new byte[] { 1, 2, 3, 4 }) }),
+                    1,
                     (_3, status2, error2, _4) =>
                     {
+                        memory2.Return(block);
+                        memory2.Dispose();
                         writeRequest.Dispose();
                         serverConnectionPipe.Dispose();
                         serverListenPipe.Dispose();
@@ -156,11 +168,10 @@ namespace Microsoft.AspNet.Server.KestrelTests
 
                 serverConnectionPipeAcceptedEvent.WaitOne();
 
-                var writeRequest = new UvWriteReq(new KestrelTrace(new TestKestrelTrace()));
+                var writeRequest = new UvWrite2Req(new KestrelTrace(new TestKestrelTrace()));
                 writeRequest.Init(loop);
                 writeRequest.Write2(
                     serverConnectionPipe,
-                    new ArraySegment<ArraySegment<byte>>(new ArraySegment<byte>[] { new ArraySegment<byte>(new byte[] { 1, 2, 3, 4 }) }),
                     serverConnectionTcp,
                     (_3, status2, error2, _4) =>
                     {

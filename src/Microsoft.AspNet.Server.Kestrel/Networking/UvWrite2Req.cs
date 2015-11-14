@@ -9,29 +9,30 @@ using Microsoft.Extensions.Logging;
 namespace Microsoft.AspNet.Server.Kestrel.Networking
 {
     /// <summary>
-    /// Summary description for UvWriteRequest
+    /// Summary description for UvWrite2Request
     /// </summary>
-    public class UvWriteReq : UvRequest
+    public class UvWrite2Req : UvRequest
     {
         private readonly static Libuv.uv_write_cb _uv_write_cb = (IntPtr ptr, int status) => UvWriteCb(ptr, status);
 
-        private readonly ArraySegment<ArraySegment<byte>> _dummyMessage = new ArraySegment<ArraySegment<byte>>(new[] { new ArraySegment<byte>(new byte[] { 1, 2, 3, 4 }) });
+        // this message is passed to write2 because it must be non-zero-length, 
+        // but it has no other functional significance
+        private readonly ArraySegment<byte> _dummyMessage = new ArraySegment<byte>(new byte[] { 1, 2, 3, 4 });
 
         private IntPtr _bufs;
 
-        private Action<UvWriteReq, int, Exception, object> _callback;
+        private Action<UvWrite2Req, int, Exception, object> _callback;
         private object _state;
-        internal const int BUFFER_COUNT = 16;
+        private const int BUFFER_COUNT = 1;
 
-        private GCHandle _pin;
-        private MemoryPoolBlock2[] _blocks;
-        private int _blockCount;
+        private GCHandle _pinUvWrite2Req;
+        private GCHandle _pinBuffer;
 
-        public UvWriteReq(IKestrelTrace logger) : base(logger)
+        public UvWrite2Req(IKestrelTrace logger) : base(logger)
         {
         }
 
-        public void Init(UvLoopHandle loop, MemoryPoolBlock2[] blocks)
+        public void Init(UvLoopHandle loop)
         {
             var requestSize = loop.Libuv.req_size(Libuv.RequestType.WRITE);
             var bufferSize = Marshal.SizeOf<Libuv.uv_buf_t>() * BUFFER_COUNT;
@@ -40,37 +41,30 @@ namespace Microsoft.AspNet.Server.Kestrel.Networking
                 loop.ThreadId,
                 requestSize + bufferSize);
             _bufs = handle + requestSize;
-            _blocks = blocks;
         }
 
-        public unsafe void Write(
+        public unsafe void Write2(
             UvStreamHandle handle,
-            int bufferCount,
-            Action<UvWriteReq, int, Exception, object> callback,
+            UvStreamHandle sendHandle,
+            Action<UvWrite2Req, int, Exception, object> callback,
             object state)
         {
             try
             {
                 // add GCHandle to keeps this SafeHandle alive while request processing
-                _pin = GCHandle.Alloc(this, GCHandleType.Normal);
+                _pinUvWrite2Req = GCHandle.Alloc(this, GCHandleType.Normal);
+
                 var pBuffers = (Libuv.uv_buf_t*)_bufs;
 
-                _blockCount = bufferCount;
-                for (var index = 0; index < bufferCount; index++)
-                {
-                    // create and pin each segment being written
-                    var block = _blocks[index];
-                    var length = block.End - block.Start;
-                    var address = block.Pin() - length;
+                _pinBuffer = GCHandle.Alloc(_dummyMessage.Array, GCHandleType.Pinned);
 
-                    pBuffers[index] = Libuv.buf_init(
-                        address,
-                        length);
-                }
+                pBuffers[0] = Libuv.buf_init(
+                    _pinBuffer.AddrOfPinnedObject(),
+                    _dummyMessage.Count);
 
                 _callback = callback;
                 _state = state;
-                _uv.write(this, handle, pBuffers, bufferCount, _uv_write_cb);
+                _uv.write2(this, handle, pBuffers, 1, sendHandle, _uv_write_cb);
             }
             catch
             {
@@ -83,17 +77,13 @@ namespace Microsoft.AspNet.Server.Kestrel.Networking
 
         private void UnpinLocal()
         {
-            _pin.Free();
-            for (var index = 0; index < _blockCount; index++)
-            {
-                // create and pin each segment being written
-                _blocks[index].Unpin();
-            }
+            _pinUvWrite2Req.Free();
+            _pinBuffer.Free();
         }
 
         private static void UvWriteCb(IntPtr ptr, int status)
         {
-            var req = FromIntPtr<UvWriteReq>(ptr);
+            var req = FromIntPtr<UvWrite2Req>(ptr);
             req.UnpinLocal();
 
             var callback = req._callback;
@@ -101,8 +91,6 @@ namespace Microsoft.AspNet.Server.Kestrel.Networking
 
             var state = req._state;
             req._state = null;
-
-            req._blockCount = 0;
 
             Exception error = null;
             if (status < 0)

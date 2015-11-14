@@ -291,15 +291,7 @@ namespace Microsoft.AspNet.Server.Kestrel.Http
                 }
             }
 
-            var memoryBlock = Memory2.Lease();
-            try
-            {
-                await ProduceStartAndFireOnStarting(memoryBlock, immediate: true);
-            }
-            finally
-            {
-                Memory2.Return(memoryBlock);
-            }
+            await ProduceStartAndFireOnStarting(immediate: true);
 
             return DuplexStream;
         }
