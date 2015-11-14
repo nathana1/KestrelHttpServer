@@ -682,7 +682,7 @@ namespace Microsoft.AspNet.Server.Kestrel.Infrastructure
             }
         }
 
-        public ArraySegment<byte> GetArraySegment(MemoryPoolIterator2 end, ArraySegment<byte> scratchBuffer)
+        public ArraySegment<byte> GetArraySegment(ref MemoryPoolIterator2 end, ArraySegment<byte> scratchBuffer)
         {
             if (IsDefault || end.IsDefault)
             {
@@ -693,7 +693,7 @@ namespace Microsoft.AspNet.Server.Kestrel.Infrastructure
                 return new ArraySegment<byte>(_block.Array, _index, end._index - _index);
             }
 
-            var length = GetLength(end);
+            var length = GetLength(ref end);
 
             if (length < scratchBuffer.Count)
             {

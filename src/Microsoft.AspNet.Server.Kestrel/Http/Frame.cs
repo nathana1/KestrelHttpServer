@@ -826,11 +826,7 @@ namespace Microsoft.AspNet.Server.Kestrel.Http
             }
         }
 
-<<<<<<< HEAD
         public static bool TakeMessageHeaders(SocketInput input, FrameRequestHeaders requestHeaders, MemoryPool2 memorypool)
-=======
-        public static bool TakeMessageHeaders(SocketInput input, FrameRequestHeaders requestHeaders)
->>>>>>> 68d63ed... Reduce GetString allocs and conversions
         {
             var scan = input.ConsumingStart();
             var consumed = scan;
@@ -891,60 +887,54 @@ namespace Microsoft.AspNet.Server.Kestrel.Http
 
                     var wrapping = false;
 
-                    while (!scan.IsEnd)
+                    var block = memorypool.Lease();
+                    try
                     {
-                        if (scan.Seek('\r') == -1)
+                        while (!scan.IsEnd)
                         {
-                            // no "\r" in sight, burn used bytes and go back to await more data
-                            return false;
-                        }
-
-                        var endValue = scan;
-                        chFirst = scan.Take(); // expecting: /r
-                        chSecond = scan.Take(); // expecting: /n
-
-                        if (chSecond != '\n')
-                        {
-                            // "\r" was all by itself, move just after it and try again
-                            scan = endValue;
-                            scan.Take();
-                            continue;
-                        }
-
-                        var chThird = scan.Peek();
-                        if (chThird == ' ' || chThird == '\t')
-                        {
-                            // special case, "\r\n " or "\r\n\t".
-                            // this is considered wrapping"linear whitespace" and is actually part of the header value
-                            // continue past this for the next
-                            wrapping = true;
-                            continue;
-                        }
-
-<<<<<<< HEAD
-                        var block = memorypool.Lease();
-                        try
-=======
-                        var name = beginName.GetArraySegment(ref endName);
-                        var value = beginValue.GetAsciiString(ref endValue);
-                        if (wrapping)
->>>>>>> 68d63ed... Reduce GetString allocs and conversions
-                        {
-                            var name = beginName.GetArraySegment(endName, block.Data);
-                            var value = beginValue.GetString(endValue);
-                            if (wrapping)
+                            if (scan.Seek('\r') == -1)
                             {
-                                value = value.Replace("\r\n", " ");
+                                // no "\r" in sight, burn used bytes and go back to await more data
+                                return false;
                             }
 
-                            consumed = scan;
-                            requestHeaders.Append(name.Array, name.Offset, name.Count, value);
-                            break;
+                            var endValue = scan;
+                            chFirst = scan.Take(); // expecting: /r
+                            chSecond = scan.Take(); // expecting: /n
+
+                            if (chSecond != '\n')
+                            {
+                                // "\r" was all by itself, move just after it and try again
+                                scan = endValue;
+                                scan.Take();
+                                continue;
+                            }
+
+                            var chThird = scan.Peek();
+                            if (chThird == ' ' || chThird == '\t')
+                            {
+                                // special case, "\r\n " or "\r\n\t".
+                                // this is considered wrapping"linear whitespace" and is actually part of the header value
+                                // continue past this for the next
+                                wrapping = true;
+                                continue;
+                            }
+
+                                var name = beginName.GetArraySegment(ref endName, block.Data);
+                                var value = beginValue.GetAsciiString(ref endValue);
+                                if (wrapping)
+                                {
+                                    value = value.Replace("\r\n", " ");
+                                }
+
+                                consumed = scan;
+                                requestHeaders.Append(name.Array, name.Offset, name.Count, value);
+                                break;
                         }
-                        finally
-                        {
-                            memorypool.Return(block);
-                        }
+                    }
+                    finally
+                    {
+                        memorypool.Return(block);
                     }
                 }
                 return false;

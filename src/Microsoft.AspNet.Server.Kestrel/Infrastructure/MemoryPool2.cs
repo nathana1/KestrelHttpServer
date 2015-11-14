@@ -36,12 +36,6 @@ namespace Microsoft.AspNet.Server.Kestrel.Infrastructure
         /// larger values can be leased but they will be disposed after use rather than returned to the pool.
         /// </summary>
         public const int MaxPooledBlockLength = _blockLength;
-
-        /// <summary>
-        /// Max allocation block size for pooled blocks, 
-        /// larger values can be leased but they will be disposed after use rather than returned to the pool.
-        /// </summary>
-        public const int MaxPooledBlockLength = _blockLength;
         
         /// <summary>
         /// 4096 * 32 gives you a slabLength of 128k contiguous bytes allocated per slab
