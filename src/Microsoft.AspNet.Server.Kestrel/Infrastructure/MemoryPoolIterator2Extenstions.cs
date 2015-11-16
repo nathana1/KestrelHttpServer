@@ -13,57 +13,36 @@ namespace Microsoft.AspNet.Server.Kestrel.Infrastructure
         private static Encoding _utf8 = Encoding.UTF8;
         private static Encoding _ascii = Encoding.ASCII;
 
-        private static unsafe string MultiBlockAsciiString(MemoryPoolBlock2 start, MemoryPoolIterator2 end, int inputOffset, int length)
+        private static unsafe string GetAsciiStringStack(MemoryPoolBlock2 start, MemoryPoolIterator2 end, int inputOffset, int length)
         {
             // avoid declaring other local vars, or doing work with stackalloc
             // to prevent the .locals init cil flag , see: https://github.com/dotnet/coreclr/issues/1279
             char* output = stackalloc char[length];
 
-            return MultiBlockAsciiIter(output, start, end, inputOffset, length);
+            return GetAsciiStringImplementation(output, start, end, inputOffset, length);
         }
 
-        private static unsafe string MultiBlockAsciiIter(char* output, MemoryPoolBlock2 start, MemoryPoolIterator2 end, int inputOffset, int length)
+        private unsafe static string GetAsciiStringHeap(MemoryPoolBlock2 start, MemoryPoolIterator2 end, int inputOffset, int length)
         {
-            var outputOffset = 0;
-            var block = start;
-            var remaining = length;
-
-            while(true)
+            var buffer = new char[length];
+            fixed (char* output = buffer)
             {
-                int following = (block != end.Block ? block.End : end.Index) - inputOffset;
-
-                if (following > 0)
-                {
-                    var input = block.Array;
-                    for (var i = 0; i < following; i++)
-                    {
-                        output[i + outputOffset] = (char)input[i + inputOffset];
-                    }
-
-                    remaining -= following;
-                    outputOffset += following;
-                }
-                
-                if (remaining == 0)
-                {
-                    return new string(output, 0, length);
-                }
-
-                block = block.Next;
-                inputOffset = block.Start;
+                return GetAsciiStringImplementation(output, start, end, inputOffset, length);
             }
         }
 
-        private static string GetAsciiStringHeap(MemoryPoolBlock2 start, MemoryPoolIterator2 end, int inputOffset, int length)
+        private static unsafe string GetAsciiStringImplementation(char* output, MemoryPoolBlock2 start, MemoryPoolIterator2 end, int inputOffset, int length)
         {
-            var output = new char[length];
             var outputOffset = 0;
             var block = start;
             var remaining = length;
 
+            var endBlock = end.Block;
+            var endIndex = end.Index;
+
             while (true)
             {
-                int following = (block != end.Block ? block.End : end.Index) - inputOffset;
+                int following = (block != endBlock ? block.End : endIndex) - inputOffset;
 
                 if (following > 0)
                 {
@@ -79,7 +58,7 @@ namespace Microsoft.AspNet.Server.Kestrel.Infrastructure
 
                 if (remaining == 0)
                 {
-                    return new string(output, 0, length); 
+                    return new string(output, 0, length);
                 }
 
                 block = block.Next;
@@ -106,7 +85,7 @@ namespace Microsoft.AspNet.Server.Kestrel.Infrastructure
                 return GetAsciiStringHeap(start.Block, end, start.Index, length);
             }
 
-            return MultiBlockAsciiString(start.Block, end, start.Index, length);
+            return GetAsciiStringStack(start.Block, end, start.Index, length);
         }
 
         public static string GetUtf8String(this MemoryPoolIterator2 start, MemoryPoolIterator2 end)
