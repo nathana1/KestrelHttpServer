@@ -521,7 +521,15 @@ namespace Microsoft.AspNet.Server.Kestrel.Http
 
             var statusBytes = ReasonPhrases.ToStatusBytes(StatusCode, ReasonPhrase);
 
-            return CreateResponseHeader(statusBytes, appCompleted, immediate);
+            var memoryBlock = Memory2.Lease();
+            try
+            {
+                return CreateResponseHeader(statusBytes, memoryBlock, appCompleted, immediate);
+            }
+            finally
+            {
+                Memory2.Return(memoryBlock);
+            }
         }
 
         private async Task ProduceEnd()
@@ -557,6 +565,92 @@ namespace Microsoft.AspNet.Server.Kestrel.Http
             {
                 ConnectionControl.End(ProduceEndType.ConnectionKeepAlive);
             }
+        }
+
+        private Task CreateResponseHeader(
+            byte[] statusBytes,
+            MemoryPoolBlock2 memoryBlock,
+            bool appCompleted,
+            bool immediate)
+        {
+            var blockRemaining = memoryBlock.Data.Count;
+
+            OutputAsciiBlock(_httpVersion == HttpVersionType.Http1_1 ? _bytesHttpVersion1_1 : _bytesHttpVersion1_0, memoryBlock, SocketOutput);
+
+            OutputAsciiBlock(statusBytes, memoryBlock, SocketOutput);
+
+            if (_responseHeaders.HasDefaultDate)
+            {
+                OutputAsciiBlock(_bytesDate, memoryBlock, SocketOutput);
+                OutputAsciiBlock(DateHeaderValueManager.GetDateHeaderValueBytes(), memoryBlock, SocketOutput);
+                OutputAsciiBlock(_bytesEndLine, memoryBlock, SocketOutput);
+            }
+
+            foreach (var header in _responseHeaders.AsOutputEnumerable())
+            {
+                foreach (var value in header.Value)
+                {
+                    OutputAsciiBlock(header.Key, memoryBlock, SocketOutput);
+                    OutputAsciiBlock(value, memoryBlock, SocketOutput);
+                    OutputAsciiBlock(_bytesEndLine, memoryBlock, SocketOutput);
+
+                    if (_responseHeaders.HasConnection && value.IndexOf("close", StringComparison.OrdinalIgnoreCase) != -1)
+                    {
+                        _keepAlive = false;
+                    }
+                }
+            }
+
+            if (_responseHeaders.HasDefaultServer)
+            {
+                OutputAsciiBlock(_bytesServer, memoryBlock, SocketOutput);
+            }
+
+            if (_keepAlive && !_responseHeaders.HasTransferEncoding && !_responseHeaders.HasContentLength)
+            {
+                if (appCompleted)
+                {
+                    // Don't set the Content-Length or Transfer-Encoding headers
+                    // automatically for HEAD requests or 101, 204, 205, 304 responses.
+                    if (Method != "HEAD" && StatusCanHaveBody(StatusCode))
+                    {
+                        // Since the app has completed and we are only now generating
+                        // the headers we can safely set the Content-Length to 0.
+                        OutputAsciiBlock(_bytesContentLengthZero, memoryBlock, SocketOutput);
+                    }
+                }
+                else
+                {
+                    if (_httpVersion == HttpVersionType.Http1_1)
+                    {
+                        _autoChunk = true;
+                        OutputAsciiBlock(_bytesTransferEncodingChunked, memoryBlock, SocketOutput);
+                    }
+                    else
+                    {
+                        _keepAlive = false;
+                    }
+                }
+            }
+
+            if (_keepAlive == false && _responseHeaders.HasConnection == false && _httpVersion == HttpVersionType.Http1_1)
+            {
+                OutputAsciiBlock(_bytesConnectionClose, memoryBlock, SocketOutput);
+            }
+            else if (_keepAlive && _responseHeaders.HasConnection == false && _httpVersion == HttpVersionType.Http1_0)
+            {
+                OutputAsciiBlock(_bytesConnectionKeepAlive, memoryBlock, SocketOutput);
+            }
+            else
+            {
+                OutputAsciiBlock(_bytesEndLine, memoryBlock, SocketOutput);
+            }
+
+            return SocketOutput.WriteAsync(
+                (memoryBlock.Start == memoryBlock.End) ?
+                default(ArraySegment<byte>) :
+                new ArraySegment<byte>(memoryBlock.Array, memoryBlock.Start, memoryBlock.End - memoryBlock.Start),
+                immediate);
         }
 
         private static void OutputAsciiBlock(string data, MemoryPoolBlock2 memoryBlock, ISocketOutput output)
@@ -608,99 +702,6 @@ namespace Microsoft.AspNet.Server.Kestrel.Http
                 }
             }
             memoryBlock.End = current;
-        }
-
-        private Task CreateResponseHeader(
-            byte[] statusBytes,
-            bool appCompleted,
-            bool immediate)
-        {
-            var memoryBlock = Memory2.Lease();
-            try
-            {
-                var blockRemaining = memoryBlock.Data.Count;
-
-                OutputAsciiBlock(_httpVersion == HttpVersionType.Http1_1 ? _bytesHttpVersion1_1 : _bytesHttpVersion1_0, memoryBlock, SocketOutput);
-
-                OutputAsciiBlock(statusBytes, memoryBlock, SocketOutput);
-
-                if (_responseHeaders.HasDefaultDate)
-                {
-                    OutputAsciiBlock(_bytesDate, memoryBlock, SocketOutput);
-                    OutputAsciiBlock(DateHeaderValueManager.GetDateHeaderValueBytes(), memoryBlock, SocketOutput);
-                    OutputAsciiBlock(_bytesEndLine, memoryBlock, SocketOutput);
-                }
-
-                foreach (var header in _responseHeaders.AsOutputEnumerable())
-                {
-                    foreach (var value in header.Value)
-                    {
-                        OutputAsciiBlock(header.Key, memoryBlock, SocketOutput);
-                        OutputAsciiBlock(value, memoryBlock, SocketOutput);
-                        OutputAsciiBlock(_bytesEndLine, memoryBlock, SocketOutput);
-
-                        if (_responseHeaders.HasConnection && value.IndexOf("close", StringComparison.OrdinalIgnoreCase) != -1)
-                        {
-                            _keepAlive = false;
-                        }
-                    }
-                }
-
-                if (_responseHeaders.HasDefaultServer)
-                {
-                    OutputAsciiBlock(_bytesServer, memoryBlock, SocketOutput);
-                }
-
-                if (_keepAlive && !_responseHeaders.HasTransferEncoding && !_responseHeaders.HasContentLength)
-                {
-                    if (appCompleted)
-                    {
-                        // Don't set the Content-Length or Transfer-Encoding headers
-                        // automatically for HEAD requests or 101, 204, 205, 304 responses.
-                        if (Method != "HEAD" && StatusCanHaveBody(StatusCode))
-                        {
-                            // Since the app has completed and we are only now generating
-                            // the headers we can safely set the Content-Length to 0.
-                            OutputAsciiBlock(_bytesContentLengthZero, memoryBlock, SocketOutput);
-                        }
-                    }
-                    else
-                    {
-                        if (_httpVersion == HttpVersionType.Http1_1)
-                        {
-                            _autoChunk = true;
-                            OutputAsciiBlock(_bytesTransferEncodingChunked, memoryBlock, SocketOutput);
-                        }
-                        else
-                        {
-                            _keepAlive = false;
-                        }
-                    }
-                }
-
-                if (_keepAlive == false && _responseHeaders.HasConnection == false && _httpVersion == HttpVersionType.Http1_1)
-                {
-                    OutputAsciiBlock(_bytesConnectionClose, memoryBlock, SocketOutput);
-                }
-                else if (_keepAlive && _responseHeaders.HasConnection == false && _httpVersion == HttpVersionType.Http1_0)
-                {
-                    OutputAsciiBlock(_bytesConnectionKeepAlive, memoryBlock, SocketOutput);
-                }
-                else
-                {
-                    OutputAsciiBlock(_bytesEndLine, memoryBlock, SocketOutput);
-                }
-
-                return SocketOutput.WriteAsync(
-                    (memoryBlock.Start == memoryBlock.End) ?
-                    default(ArraySegment<byte>) :
-                    new ArraySegment<byte>(memoryBlock.Array, memoryBlock.Start, memoryBlock.End - memoryBlock.Start),
-                    immediate);
-            }
-            finally
-            {
-                Memory2.Return(memoryBlock);
-            }
         }
 
         private bool TakeStartLine(SocketInput input)
