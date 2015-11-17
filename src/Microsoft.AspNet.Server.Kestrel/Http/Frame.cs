@@ -670,14 +670,19 @@ namespace Microsoft.AspNet.Server.Kestrel.Http
                     return false;
                 }
 
+                // URIs are always encoded/escaped to ASCII https://tools.ietf.org/html/rfc3986#page-11 
+                // Multibyte Internationalized Resource Identifiers (IRIs) are first converted to utf8; 
+                // then encoded/escaped to ASCII  https://www.ietf.org/rfc/rfc3987.txt "Mapping of IRIs to URIs"
                 string requestUrlPath;
                 if (needDecode)
                 {
+                    // URI was encoded, unescape and then parse as utf8
                     pathEnd = UrlPathDecoder.Unescape(pathBegin, pathEnd);
                     requestUrlPath = pathBegin.GetUtf8String(pathEnd);
                 }
                 else
                 {
+                    // URI wasn't encoded, parse as ASCII
                     requestUrlPath = pathBegin.GetAsciiString(pathEnd);
                 }
 
