@@ -93,6 +93,9 @@ namespace Microsoft.AspNet.Server.Kestrel.Infrastructure
 
             var length = start.GetLength(end);
 
+            // Bytes out of the range of ascii are treated as "opaque data" 
+            // and kept in string as a char value that casts to same input byte value
+            // https://tools.ietf.org/html/rfc7230#section-3.2.4
             if (end.Block == start.Block)
             {
                 return GetAsciiStringStack(start.Block.Array, start.Index, length);
