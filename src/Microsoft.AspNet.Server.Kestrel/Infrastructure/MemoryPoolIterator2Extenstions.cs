@@ -11,7 +11,24 @@ namespace Microsoft.AspNet.Server.Kestrel.Infrastructure
         private const int _maxStackAllocBytes = 16384;
 
         private static Encoding _utf8 = Encoding.UTF8;
-        private static Encoding _ascii = Encoding.ASCII;
+
+        private static unsafe string GetAsciiStringStack(byte[] input, int inputOffset, int length)
+        {
+            // avoid declaring other local vars, or doing work with stackalloc
+            // to prevent the .locals init cil flag , see: https://github.com/dotnet/coreclr/issues/1279
+            char* output = stackalloc char[length];
+
+            return GetAsciiStringImplementation(output, input, inputOffset, length);
+        }
+        private static unsafe string GetAsciiStringImplementation(char* output, byte[] input, int inputOffset, int length)
+        {
+            for (var i = 0; i < length; i++)
+            {
+                output[i] = (char)input[inputOffset + i];
+            }
+
+            return new string(output, 0, length);
+        }
 
         private static unsafe string GetAsciiStringStack(MemoryPoolBlock2 start, MemoryPoolIterator2 end, int inputOffset, int length)
         {
@@ -25,6 +42,7 @@ namespace Microsoft.AspNet.Server.Kestrel.Infrastructure
         private unsafe static string GetAsciiStringHeap(MemoryPoolBlock2 start, MemoryPoolIterator2 end, int inputOffset, int length)
         {
             var buffer = new char[length];
+
             fixed (char* output = buffer)
             {
                 return GetAsciiStringImplementation(output, start, end, inputOffset, length);
@@ -77,7 +95,7 @@ namespace Microsoft.AspNet.Server.Kestrel.Infrastructure
 
             if (end.Block == start.Block)
             {
-                return _ascii.GetString(start.Block.Array, start.Index, length);
+                return GetAsciiStringStack(start.Block.Array, start.Index, length);
             }
 
             if (length > _maxStackAllocBytes)
