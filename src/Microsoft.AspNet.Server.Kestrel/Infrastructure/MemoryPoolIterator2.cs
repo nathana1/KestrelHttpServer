@@ -532,7 +532,7 @@ namespace Microsoft.AspNet.Server.Kestrel.Infrastructure
             }
         }
 
-        public MemoryPoolIterator2 CopyFrom(ArraySegment<byte> buffer)
+        public int CopyFrom(ArraySegment<byte> buffer)
         {
             Debug.Assert(_block != null);
             Debug.Assert(_block.Pool != null);
@@ -570,59 +570,22 @@ namespace Microsoft.AspNet.Server.Kestrel.Infrastructure
                 block.End = blockIndex;
             }
 
-            return new MemoryPoolIterator2(block, blockIndex);
+            _block = block;
+            _index = blockIndex;
+            return buffer.Count;
         }
 
-        public void CopyFrom(byte[] data)
+        public int CopyFrom(byte[] data)
         {
-            CopyFrom(data, 0, data.Length);
+            return CopyFrom(new ArraySegment<byte>(data));
         }
 
-        public void CopyFrom(byte[] data, int offset, int count)
+        public int CopyFrom(byte[] data, int offset, int count)
         {
-            Debug.Assert(_block.Next == null);
-            Debug.Assert(_block.End == _index);
-
-            var block = _block;
-
-            var sourceData = data;
-            var sourceStart = offset;
-            var sourceEnd = offset + count;
-
-            var targetData = block.Array;
-            var targetStart = block.End;
-            var targetEnd = block.Data.Offset + block.Data.Count;
-
-            while (true)
-            {
-                // actual count to copy is remaining data, or unused trailing space in the current block, whichever is smaller
-                var copyCount = Math.Min(sourceEnd - sourceStart, targetEnd - targetStart);
-
-                Buffer.BlockCopy(sourceData, sourceStart, targetData, targetStart, copyCount);
-                sourceStart += copyCount;
-                targetStart += copyCount;
-
-                // if this means all source data has been copied
-                if (sourceStart == sourceEnd)
-                {
-                    // increase occupied space in the block, and adjust iterator at start of unused trailing space
-                    block.End = targetStart;
-                    _block = block;
-                    _index = targetStart;
-                    return;
-                }
-
-                // otherwise another block needs to be allocated to follow this one
-                block.Next = block.Pool.Lease();
-                block = block.Next;
-
-                targetData = block.Array;
-                targetStart = block.End;
-                targetEnd = block.Data.Offset + block.Data.Count;
-            }
+            return CopyFrom(new ArraySegment<byte>(data, offset, count));
         }
 
-        public unsafe void CopyFromAscii(string data)
+        public unsafe int CopyFromAscii(string data)
         {
             Debug.Assert(_block.Next == null);
             Debug.Assert(_block.End == _index);
@@ -670,11 +633,12 @@ namespace Microsoft.AspNet.Server.Kestrel.Infrastructure
                             blockRemaining--;
                         }
                         block.End += copied;
-                        _block = block;
-                        _index = block.End;
                     }
                 }
             }
+            _block = block;
+            _index = block.End;
+            return data.Length;
         }
     }
 }

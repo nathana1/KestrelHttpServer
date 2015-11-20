@@ -71,7 +71,7 @@ namespace Microsoft.AspNet.Server.Kestrel.Http
             bool socketDisconnect = false)
         {
             var tail = ProducingStart();
-            tail = tail.CopyFrom(buffer);
+            tail.CopyFrom(buffer);
             // We do our own accounting below
             ProducingComplete(tail, count: 0);
 
