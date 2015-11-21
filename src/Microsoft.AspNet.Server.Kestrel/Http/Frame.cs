@@ -53,8 +53,7 @@ namespace Microsoft.AspNet.Server.Kestrel.Http
         private Task _requestProcessingTask;
         private volatile bool _requestProcessingStopping; // volatile, see: https://msdn.microsoft.com/en-us/library/x13ttww7.aspx
         private volatile bool _requestAborted;
-        private CancellationTokenSource _disconnectCts = new CancellationTokenSource();
-        private CancellationTokenSource _requestAbortCts;
+        private CancellationTokenSource _abortedCts;
 
         private FrameRequestStream _requestBody;
         private FrameResponseStream _responseBody;
@@ -190,7 +189,8 @@ namespace Microsoft.AspNet.Server.Kestrel.Http
 
             _prepareRequest?.Invoke(this);
 
-            _requestAbortCts?.Dispose();
+            _abortedCts?.Dispose();
+            _abortedCts = null;
         }
 
         public void ResetResponseHeaders()
@@ -247,11 +247,24 @@ namespace Microsoft.AspNet.Server.Kestrel.Http
                 ConnectionControl.End(ProduceEndType.SocketDisconnect);
                 SocketInput.AbortAwaiting();
 
-                _disconnectCts.Cancel();
+                try
+                {
+                    _abortedCts?.Cancel();
+                }
+                catch (ObjectDisposedException)
+                {
+                    // Don't log ODEs thrown from _abortedCts.Cancel()
+                    // If _abortedCts is disposed, the app has already completed.
+                }
             }
             catch (Exception ex)
             {
                 Log.LogError("Abort", ex);
+            }
+            finally
+            {
+                _abortedCts?.Dispose();
+                _abortedCts = null;
             }
         }
 
@@ -298,8 +311,8 @@ namespace Microsoft.AspNet.Server.Kestrel.Http
                         ResponseBody = _responseBody;
                         DuplexStream = new FrameDuplexStream(RequestBody, ResponseBody);
 
-                        _requestAbortCts = CancellationTokenSource.CreateLinkedTokenSource(_disconnectCts.Token);
-                        RequestAborted = _requestAbortCts.Token;
+                        _abortedCts = new CancellationTokenSource();
+                        RequestAborted = _abortedCts.Token;
 
                         var httpContext = HttpContextFactory.Create(this);
                         try
@@ -352,7 +365,8 @@ namespace Microsoft.AspNet.Server.Kestrel.Http
             {
                 try
                 {
-                    _disconnectCts.Dispose();
+                    _abortedCts?.Dispose();
+                    _abortedCts = null;
 
                     // If _requestAborted is set, the connection has already been closed.
                     if (!_requestAborted)
