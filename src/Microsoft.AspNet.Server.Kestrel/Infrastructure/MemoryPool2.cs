@@ -43,12 +43,6 @@ namespace Microsoft.AspNet.Server.Kestrel.Infrastructure
         /// </summary>
         private const int _slabLength = _blockStride * _blockCount;
 
-        /// <summary>
-        /// Max allocation block size for pooled blocks, 
-        /// larger values can be leased but they will be disposed after use rather than returned to the pool.
-        /// </summary>
-        public const int MaxPooledBlockLength = _blockLength;
-
         // Processor count is a sys call https://github.com/dotnet/coreclr/blob/0e0ff9d17ab586f3cc7224dd33d8781cd77f3ca8/src/mscorlib/src/System/Environment.cs#L548
         // Nor does it look like its constant https://github.com/dotnet/corefx/blob/master/src/System.Threading.Tasks.Parallel/src/System/Threading/PlatformHelper.cs#L23
         public static int _partitionCount = Environment.ProcessorCount;
