@@ -577,9 +577,9 @@ namespace Microsoft.AspNet.Server.Kestrel.Infrastructure
                 bufferIndex += bytesToCopy;
                 remaining -= bytesToCopy;
                 bytesLeftInBlock -= bytesToCopy;
+                block.End = blockIndex;
             }
 
-            block.End = blockIndex;
             _block = block;
             _index = blockIndex;
 
@@ -643,10 +643,10 @@ namespace Microsoft.AspNet.Server.Kestrel.Infrastructure
                         bytesLeftInBlockMinusSpan -= copied;
                         bytesLeftInBlock -= copied;
                     }
+                    block.End = blockIndex;
                 }
             }
 
-            block.End = blockIndex;
             _block = block;
             _index = blockIndex;
 
