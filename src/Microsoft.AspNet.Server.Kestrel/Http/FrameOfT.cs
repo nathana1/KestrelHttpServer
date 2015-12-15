@@ -93,13 +93,6 @@ namespace Microsoft.AspNet.Server.Kestrel.Http
                                 await FireOnStarting();
                             }
 
-                            if (_onCompleted != null)
-                            {
-                                await FireOnCompleted();
-                            }
-
-                            _application.DisposeContext(context, _applicationException);
-
                             // If _requestAbort is set, the connection has already been closed.
                             if (!_requestAborted)
                             {
@@ -114,6 +107,13 @@ namespace Microsoft.AspNet.Server.Kestrel.Http
 
                             _requestBody.StopAcceptingReads();
                             _responseBody.StopAcceptingWrites();
+
+                            if (_onCompleted != null)
+                            {
+                                await FireOnCompleted();
+                            }
+
+                            _application.DisposeContext(context, _applicationException);
                         }
 
                         if (!_keepAlive)
