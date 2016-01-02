@@ -20,6 +20,8 @@ namespace Microsoft.AspNet.Server.Kestrel
 
         public KestrelServer(IFeatureCollection features, IApplicationLifetime applicationLifetime, ILogger logger)
         {
+            Constants.InitalizeJitConstants();
+
             if (features == null)
             {
                 throw new ArgumentNullException(nameof(features));

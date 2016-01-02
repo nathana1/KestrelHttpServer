@@ -9,8 +9,6 @@ namespace Microsoft.AspNet.Server.Kestrel.Infrastructure
 {
     public partial struct MemoryPoolIterator2
     {
-        private readonly static int _vectorSpan = Vector<byte>.Count; 
-
         private MemoryPoolBlock2 _block;
         private int _index;
 
@@ -247,14 +245,14 @@ namespace Microsoft.AspNet.Server.Kestrel.Infrastructure
                     if (Vector.IsHardwareAccelerated)
                     {
 #endif
-                        if (following >= _vectorSpan)
+                        if (following >= Constants.VectorSpan)
                         {
                             var byte0Equals = Vector.Equals(new Vector<byte>(array, index), byte0Vector);
 
                             if (byte0Equals.Equals(Vector<byte>.Zero))
                             {
-                                following -= _vectorSpan;
-                                index += _vectorSpan;
+                                following -= Constants.VectorSpan;
+                                index += Constants.VectorSpan;
                                 continue;
                             }
 
@@ -330,7 +328,7 @@ namespace Microsoft.AspNet.Server.Kestrel.Infrastructure
                     if (Vector.IsHardwareAccelerated)
                     {
 #endif
-                        if (following >= _vectorSpan)
+                        if (following >= Constants.VectorSpan)
                         {
                             var data = new Vector<byte>(array, index);
                             var byte0Equals = Vector.Equals(data, byte0Vector);
@@ -347,8 +345,8 @@ namespace Microsoft.AspNet.Server.Kestrel.Infrastructure
 
                             if (byte0Index == int.MaxValue && byte1Index == int.MaxValue)
                             {
-                                following -= _vectorSpan;
-                                index += _vectorSpan;
+                                following -= Constants.VectorSpan;
+                                index += Constants.VectorSpan;
                                 continue;
                             }
 
@@ -438,7 +436,7 @@ namespace Microsoft.AspNet.Server.Kestrel.Infrastructure
                     if (Vector.IsHardwareAccelerated)
                     {
 #endif
-                        if (following >= _vectorSpan)
+                        if (following >= Constants.VectorSpan)
                         {
                             var data = new Vector<byte>(array, index);
                             var byte0Equals = Vector.Equals(data, byte0Vector);
@@ -460,8 +458,8 @@ namespace Microsoft.AspNet.Server.Kestrel.Infrastructure
 
                             if (byte0Index == int.MaxValue && byte1Index == int.MaxValue && byte2Index == int.MaxValue)
                             {
-                                following -= _vectorSpan;
-                                index += _vectorSpan;
+                                following -= Constants.VectorSpan;
+                                index += Constants.VectorSpan;
                                 continue;
                             }
 
