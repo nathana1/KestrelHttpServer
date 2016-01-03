@@ -7,7 +7,6 @@ using System.IO;
 using System.Linq;
 using System.Net;
 using System.Numerics;
-using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.AspNet.Http;
@@ -22,24 +21,6 @@ namespace Microsoft.AspNet.Server.Kestrel.Http
 {
     public abstract partial class Frame : FrameContext, IFrameControl
     {
-        private static readonly Encoding _ascii = Encoding.ASCII;
-        private static readonly ArraySegment<byte> _endChunkBytes = CreateAsciiByteArraySegment("\r\n");
-        private static readonly ArraySegment<byte> _endChunkedResponseBytes = CreateAsciiByteArraySegment("0\r\n\r\n");
-        private static readonly ArraySegment<byte> _continueBytes = CreateAsciiByteArraySegment("HTTP/1.1 100 Continue\r\n\r\n");
-        private static readonly ArraySegment<byte> _emptyData = new ArraySegment<byte>(new byte[0]);
-        private static readonly byte[] _hex = Encoding.ASCII.GetBytes("0123456789abcdef");
-
-        private static readonly byte[] _bytesConnectionClose = Encoding.ASCII.GetBytes("\r\nConnection: close");
-        private static readonly byte[] _bytesConnectionKeepAlive = Encoding.ASCII.GetBytes("\r\nConnection: keep-alive");
-        private static readonly byte[] _bytesTransferEncodingChunked = Encoding.ASCII.GetBytes("\r\nTransfer-Encoding: chunked");
-        private static readonly byte[] _bytesHttpVersion1_0 = Encoding.ASCII.GetBytes("HTTP/1.0 ");
-        private static readonly byte[] _bytesHttpVersion1_1 = Encoding.ASCII.GetBytes("HTTP/1.1 ");
-        private static readonly byte[] _bytesContentLengthZero = Encoding.ASCII.GetBytes("\r\nContent-Length: 0");
-        private static readonly byte[] _bytesSpace = Encoding.ASCII.GetBytes(" ");
-        private static readonly byte[] _bytesServer = Encoding.ASCII.GetBytes("\r\nServer: Kestrel");
-        private static readonly byte[] _bytesDate = Encoding.ASCII.GetBytes("Date: ");
-        private static readonly byte[] _bytesEndHeaders = Encoding.ASCII.GetBytes("\r\n\r\n");
-
         private static Vector<byte> _vectorCRs = new Vector<byte>((byte)'\r');
         private static Vector<byte> _vectorColons = new Vector<byte>((byte)':');
         private static Vector<byte> _vectorSpaces = new Vector<byte>((byte)' ');
@@ -258,7 +239,7 @@ namespace Microsoft.AspNet.Server.Kestrel.Http
                 DateHeaderValueManager.GetDateHeaderValueBytes());
             _responseHeaders.SetRawServer(
                 "Kestrel",
-                _bytesServer);
+                Constants.HeaderBytesServer);
         }
 
         /// <summary>
@@ -404,13 +385,13 @@ namespace Microsoft.AspNet.Server.Kestrel.Http
         public void Flush()
         {
             ProduceStartAndFireOnStarting(immediate: false).GetAwaiter().GetResult();
-            SocketOutput.Write(_emptyData, immediate: true);
+            SocketOutput.Write(new ArraySegment<byte>(Constants.HeaderEmptyDataBytes), immediate: true);
         }
 
         public async Task FlushAsync(CancellationToken cancellationToken)
         {
             await ProduceStartAndFireOnStarting(immediate: false);
-            await SocketOutput.WriteAsync(_emptyData, immediate: true, cancellationToken: cancellationToken);
+            await SocketOutput.WriteAsync(new ArraySegment<byte>(Constants.HeaderEmptyDataBytes), immediate: true, cancellationToken: cancellationToken);
         }
 
         public void Write(ArraySegment<byte> data)
@@ -474,28 +455,28 @@ namespace Microsoft.AspNet.Server.Kestrel.Http
         {
             SocketOutput.Write(BeginChunkBytes(data.Count), immediate: false);
             SocketOutput.Write(data, immediate: false);
-            SocketOutput.Write(_endChunkBytes, immediate: true);
+            SocketOutput.Write(new ArraySegment<byte>(Constants.HeaderEndChunkBytes), immediate: true);
         }
 
         private async Task WriteChunkedAsync(ArraySegment<byte> data, CancellationToken cancellationToken)
         {
             await SocketOutput.WriteAsync(BeginChunkBytes(data.Count), immediate: false, cancellationToken: cancellationToken);
             await SocketOutput.WriteAsync(data, immediate: false, cancellationToken: cancellationToken);
-            await SocketOutput.WriteAsync(_endChunkBytes, immediate: true, cancellationToken: cancellationToken);
+            await SocketOutput.WriteAsync(new ArraySegment<byte>(Constants.HeaderEndChunkBytes), immediate: true, cancellationToken: cancellationToken);
         }
 
         public static ArraySegment<byte> BeginChunkBytes(int dataCount)
         {
             var bytes = new byte[10]
             {
-                _hex[((dataCount >> 0x1c) & 0x0f)],
-                _hex[((dataCount >> 0x18) & 0x0f)],
-                _hex[((dataCount >> 0x14) & 0x0f)],
-                _hex[((dataCount >> 0x10) & 0x0f)],
-                _hex[((dataCount >> 0x0c) & 0x0f)],
-                _hex[((dataCount >> 0x08) & 0x0f)],
-                _hex[((dataCount >> 0x04) & 0x0f)],
-                _hex[((dataCount >> 0x00) & 0x0f)],
+                Constants.HexBytes[((dataCount >> 0x1c) & 0x0f)],
+                Constants.HexBytes[((dataCount >> 0x18) & 0x0f)],
+                Constants.HexBytes[((dataCount >> 0x14) & 0x0f)],
+                Constants.HexBytes[((dataCount >> 0x10) & 0x0f)],
+                Constants.HexBytes[((dataCount >> 0x0c) & 0x0f)],
+                Constants.HexBytes[((dataCount >> 0x08) & 0x0f)],
+                Constants.HexBytes[((dataCount >> 0x04) & 0x0f)],
+                Constants.HexBytes[((dataCount >> 0x00) & 0x0f)],
                 (byte)'\r',
                 (byte)'\n',
             };
@@ -515,13 +496,7 @@ namespace Microsoft.AspNet.Server.Kestrel.Http
 
         private void WriteChunkedResponseSuffix()
         {
-            SocketOutput.Write(_endChunkedResponseBytes, immediate: true);
-        }
-
-        private static ArraySegment<byte> CreateAsciiByteArraySegment(string text)
-        {
-            var bytes = Encoding.ASCII.GetBytes(text);
-            return new ArraySegment<byte>(bytes);
+            SocketOutput.Write(new ArraySegment<byte>(Constants.HeaderEndChunkedResponseBytes), immediate: true);
         }
 
         public void ProduceContinue()
@@ -533,7 +508,7 @@ namespace Microsoft.AspNet.Server.Kestrel.Http
                 RequestHeaders.TryGetValue("Expect", out expect) &&
                 (expect.FirstOrDefault() ?? "").Equals("100-continue", StringComparison.OrdinalIgnoreCase))
             {
-                SocketOutput.Write(_continueBytes);
+                SocketOutput.Write(new ArraySegment<byte>(Constants.HeaderContinueBytes));
             }
         }
 
@@ -596,7 +571,7 @@ namespace Microsoft.AspNet.Server.Kestrel.Http
                     ReasonPhrase = null;
 
                     ResetResponseHeaders();
-                    _responseHeaders.SetRawContentLength("0", _bytesContentLengthZero);
+                    _responseHeaders.SetRawContentLength("0", Constants.HeaderBytesContentLengthZero);
                 }
             }
 
@@ -660,7 +635,7 @@ namespace Microsoft.AspNet.Server.Kestrel.Http
                     {
                         // Since the app has completed and we are only now generating
                         // the headers we can safely set the Content-Length to 0.
-                        _responseHeaders.SetRawContentLength("0", _bytesContentLengthZero);
+                        _responseHeaders.SetRawContentLength("0", Constants.HeaderBytesContentLengthZero);
                     }
                 }
                 else
@@ -668,7 +643,7 @@ namespace Microsoft.AspNet.Server.Kestrel.Http
                     if (_httpVersion == HttpVersionType.Http1_1)
                     {
                         _autoChunk = true;
-                        _responseHeaders.SetRawTransferEncoding("chunked", _bytesTransferEncodingChunked);
+                        _responseHeaders.SetRawTransferEncoding("chunked", Constants.HeaderBytesTransferEncodingChunked);
                     }
                     else
                     {
@@ -679,17 +654,17 @@ namespace Microsoft.AspNet.Server.Kestrel.Http
 
             if (_keepAlive == false && _responseHeaders.HasConnection == false && _httpVersion == HttpVersionType.Http1_1)
             {
-                _responseHeaders.SetRawConnection("close", _bytesConnectionClose);
+                _responseHeaders.SetRawConnection("close", Constants.HeaderBytesConnectionClose);
             }
             else if (_keepAlive && _responseHeaders.HasConnection == false && _httpVersion == HttpVersionType.Http1_0)
             {
-                _responseHeaders.SetRawConnection("keep-alive", _bytesConnectionKeepAlive);
+                _responseHeaders.SetRawConnection("keep-alive", Constants.HeaderBytesConnectionKeepAlive);
             }
 
-            end.CopyFrom(_httpVersion == HttpVersionType.Http1_1 ? _bytesHttpVersion1_1 : _bytesHttpVersion1_0);
+            end.CopyFrom(_httpVersion == HttpVersionType.Http1_1 ? Constants.HeaderBytesHttpVersion1_1 : Constants.HeaderBytesHttpVersion1_0);
             end.CopyFrom(statusBytes);
             _responseHeaders.CopyTo(ref end);
-            end.CopyFrom(_bytesEndHeaders, 0, _bytesEndHeaders.Length);
+            end.CopyFrom(Constants.HeaderBytesEndHeaders, 0, Constants.HeaderBytesEndHeaders.Length);
 
             SocketOutput.ProducingComplete(end);
 

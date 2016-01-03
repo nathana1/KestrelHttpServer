@@ -20,6 +20,7 @@ namespace Microsoft.AspNet.Server.Kestrel
 
         public KestrelServer(IFeatureCollection features, IApplicationLifetime applicationLifetime, ILogger logger)
         {
+            // method needed while this bug is active https://github.com/dotnet/coreclr/issues/2526
             Constants.InitalizeJitConstants();
 
             if (features == null)

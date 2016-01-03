@@ -96,19 +96,21 @@ namespace Microsoft.AspNet.Server.Kestrel.Infrastructure
 
         public void Skip(int bytesToSkip)
         {
-            if (_block == null)
+            var block = _block;
+            if (block == null)
             {
-                return;
-            }
-            var following = _block.End - _index;
-            if (following >= bytesToSkip)
-            {
-                _index += bytesToSkip;
                 return;
             }
 
-            var block = _block;
             var index = _index;
+
+            var following = block.End - index;
+            if (following >= bytesToSkip)
+            {
+                _index = index + bytesToSkip;
+                return;
+            }
+
             while (true)
             {
                 if (block.Next == null)
