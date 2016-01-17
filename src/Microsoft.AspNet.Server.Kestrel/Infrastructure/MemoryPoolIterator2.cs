@@ -55,9 +55,29 @@ namespace Microsoft.AspNet.Server.Kestrel.Infrastructure
             }
         }
 
-        public MemoryPoolBlock2 Block => _block;
+        public MemoryPoolBlock2 Block
+        {
+            get
+            {
+                return _block;
+            }
+            set
+            {
+                _block = value;
+            }
+        }
 
-        public int Index => _index;
+        public int Index
+        {
+            get
+            {
+                return _index;
+            }
+            set
+            {
+                _index = value;
+            }
+        }
 
         public int Take()
         {
