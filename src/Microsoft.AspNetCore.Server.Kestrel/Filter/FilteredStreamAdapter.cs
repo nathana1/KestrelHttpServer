@@ -23,7 +23,7 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Filter
             IThreadPool threadPool)
         {
             SocketInput = new SocketInput(memory, threadPool);
-            SocketOutput = new StreamSocketOutput(filteredStream, memory);
+            SocketOutput = new StreamSocketOutput(filteredStream, memory, logger);
 
             _log = logger;
             _filteredStream = filteredStream;
