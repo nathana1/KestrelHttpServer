@@ -46,6 +46,11 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Http
         private readonly object _onCompletedSync = new Object();
 
         protected bool _corruptedRequest = false;
+
+        public DateHeaderValueManager DateHeaderValueManager { get; set; }
+        public IComponentFactory<Headers> HeaderFactory { get; set; }
+        public IComponentFactory<Streams> StreamFactory { get; set; }
+
         private Headers _frameHeaders;
         private Streams _frameStreams;
 
@@ -75,7 +80,7 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Http
             _pathBase = context.ServerAddress.PathBase;
 
             FrameControl = this;
-            Reset();
+            Reset(false);
         }
 
         public string Scheme { get; set; }
@@ -176,19 +181,25 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Http
 
         public void InitializeHeaders()
         {
-            _frameHeaders = HttpComponentFactory.CreateHeaders(DateHeaderValueManager);
-            RequestHeaders = _frameHeaders.RequestHeaders;
-            ResponseHeaders = _frameHeaders.ResponseHeaders;
+            if (_frameHeaders == null)
+            {
+                _frameHeaders = HeaderFactory.Create();
+                RequestHeaders = _frameHeaders.RequestHeaders;
+                ResponseHeaders = _frameHeaders.ResponseHeaders;
+            }
+            _frameHeaders.Initialize(DateHeaderValueManager);
         }
-
 
         public void InitializeStreams(MessageBody messageBody)
         {
-            _frameStreams = HttpComponentFactory.CreateStreams(this);
-
+            if (_frameStreams == null)
+            {
+                _frameStreams = StreamFactory.Create();
+                DuplexStream = _frameStreams.DuplexStream;
+            }
             RequestBody = _frameStreams.RequestBody.StartAcceptingReads(messageBody);
             ResponseBody = _frameStreams.ResponseBody.StartAcceptingWrites();
-            DuplexStream = _frameStreams.DuplexStream;
+            _frameStreams.Initialize(this);
         }
 
         public void PauseStreams()
@@ -209,9 +220,9 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Http
             _frameStreams.ResponseBody.StopAcceptingWrites();
         }
 
-        public void Reset()
+        public void Reset(bool immediateReuse)
         {
-            ResetComponents();
+            ResetComponents(immediateReuse);
 
             _onStarting = null;
             _onCompleted = null;
@@ -248,23 +259,43 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Http
             _abortedCts = null;
         }
 
-        protected void ResetComponents()
+        protected void ResetComponents(bool immediateReuse)
         {
-            var frameHeaders = Interlocked.Exchange(ref _frameHeaders, null);
-            if (frameHeaders != null)
+            if (immediateReuse && HeaderFactory.MaxPooled > 0)
             {
-                RequestHeaders = null;
-                ResponseHeaders = null;
-                HttpComponentFactory.DisposeHeaders(frameHeaders);
+                if (_frameHeaders != null)
+                {
+                    HeaderFactory.Reset(_frameHeaders);
+                }
+            }
+            else
+            {
+                var frameHeaders = Interlocked.Exchange(ref _frameHeaders, null);
+                if (frameHeaders != null)
+                {
+                    RequestHeaders = null;
+                    ResponseHeaders = null;
+                    HeaderFactory.Dispose(frameHeaders);
+                }
             }
 
-            var frameStreams = Interlocked.Exchange(ref _frameStreams, null);
-            if (frameStreams != null)
+            if (immediateReuse && StreamFactory.MaxPooled > 0)
             {
-                RequestBody = null;
-                ResponseBody = null;
-                DuplexStream = null;
-                HttpComponentFactory.DisposeStreams(frameStreams);
+                if (_frameStreams != null)
+                {
+                    StreamFactory.Reset(_frameStreams);
+                }
+            }
+            else
+            {
+                var frameStreams = Interlocked.Exchange(ref _frameStreams, null);
+                if (frameStreams != null)
+                {
+                    RequestBody = null;
+                    ResponseBody = null;
+                    DuplexStream = null;
+                    StreamFactory.Dispose(frameStreams);
+                }
             }
         }
 

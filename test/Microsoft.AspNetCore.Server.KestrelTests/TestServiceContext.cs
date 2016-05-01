@@ -20,12 +20,9 @@ namespace Microsoft.AspNetCore.Server.KestrelTests
             AppLifetime = new LifetimeNotImplemented();
             Log = new TestKestrelTrace();
             ThreadPool = new LoggingThreadPool(Log);
-            DateHeaderValueManager = new TestDateHeaderValueManager();
 
             ServerOptions = new KestrelServerOptions();
             ServerOptions.ShutdownTimeout = TimeSpan.FromSeconds(5);
-
-            HttpComponentFactory = new HttpComponentFactory(ServerOptions);
         }
 
         public TestServiceContext(IConnectionFilter filter)
@@ -43,9 +40,14 @@ namespace Microsoft.AspNetCore.Server.KestrelTests
             set
             {
                 _app = value;
+
                 FrameFactory = connectionContext =>
                 {
-                    return new Frame<HttpContext>(new DummyApplication(_app), connectionContext);
+                    return new Frame<HttpContext>(new DummyApplication(_app), connectionContext)
+                    {
+                        HeaderFactory = ServerOptions.HeaderFactory,
+                        StreamFactory = ServerOptions.StreamFactory
+                    };
                 };
             }
         }

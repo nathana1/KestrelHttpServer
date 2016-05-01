@@ -31,10 +31,14 @@ namespace Microsoft.AspNetCore.Server.KestrelTests
             {
                 var connectionContext = new ConnectionContext()
                 {
-                    DateHeaderValueManager = new DateHeaderValueManager(),
                     ServerAddress = ServerAddress.FromUrl("http://localhost:5000")
                 };
-                var frame = new Frame<object>(application: null, context: connectionContext);
+                var frame = new Frame<object>(application: null, context: connectionContext)
+                {
+                    DateHeaderValueManager = new DateHeaderValueManager(),
+                    HeaderFactory = new HeaderFactory(),
+                    StreamFactory = new StreamFactory()
+                };
                 var headerCollection = new FrameRequestHeaders();
 
                 var headerArray = Encoding.ASCII.GetBytes(rawHeaders);

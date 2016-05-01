@@ -173,8 +173,6 @@ namespace Microsoft.AspNetCore.Server.KestrelTests
         [MemberData(nameof(ConnectionFilterData))]
         public async Task ReuseStreamsOn(ServiceContext testContext)
         {
-            testContext.ServerOptions.MaxPooledStreams = 120;
-
             var streamCount = 0;
             var loopCount = 20;
             Stream lastStream = null;
@@ -192,6 +190,7 @@ namespace Microsoft.AspNetCore.Server.KestrelTests
                     },
                     testContext))
             {
+                server.StreamFactory.MaxPooled = 20;
 
                 using (var connection = new TestConnection(server.Port))
                 {
@@ -216,8 +215,6 @@ namespace Microsoft.AspNetCore.Server.KestrelTests
         [MemberData(nameof(ConnectionFilterData))]
         public async Task ReuseStreamsOff(ServiceContext testContext)
         {
-            testContext.ServerOptions.MaxPooledStreams = 0;
-
             var streamCount = 0;
             var loopCount = 20;
             Stream lastStream = null;

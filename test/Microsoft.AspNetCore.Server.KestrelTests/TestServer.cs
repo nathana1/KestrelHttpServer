@@ -6,6 +6,7 @@ using System.Threading;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Server.Kestrel;
 using Microsoft.AspNetCore.Server.Kestrel.Http;
+using Microsoft.AspNetCore.Server.Kestrel.Infrastructure;
 using Microsoft.AspNetCore.Server.Kestrel.TestCommon;
 
 namespace Microsoft.AspNetCore.Server.KestrelTests
@@ -15,6 +16,9 @@ namespace Microsoft.AspNetCore.Server.KestrelTests
     /// </summary>
     public class TestServer : IDisposable
     {
+        public HeaderFactory HeaderFactory;
+        public StreamFactory StreamFactory;
+
         private KestrelEngine _engine;
         private IDisposable _server;
         ServerAddress _address;
@@ -33,9 +37,17 @@ namespace Microsoft.AspNetCore.Server.KestrelTests
 
         public TestServer(RequestDelegate app, ServiceContext context, string serverAddress)
         {
+            var dateHeaderValueManager = new DateHeaderValueManager();
+            HeaderFactory = new HeaderFactory();
+            StreamFactory = new StreamFactory();
             context.FrameFactory = connectionContext =>
             {
-                return new Frame<HttpContext>(new DummyApplication(app), connectionContext);
+                return new Frame<HttpContext>(new DummyApplication(app), connectionContext)
+                {
+                    DateHeaderValueManager = dateHeaderValueManager,
+                    HeaderFactory = HeaderFactory,
+                    StreamFactory = StreamFactory
+                };
             };
 
             try

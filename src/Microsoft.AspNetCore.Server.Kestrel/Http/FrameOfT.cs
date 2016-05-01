@@ -88,7 +88,7 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Http
                             var context = _application.CreateContext(this);
                             try
                             {
-                                await _application.ProcessRequestAsync(context).ConfigureAwait(false);
+                                await _application.ProcessRequestAsync(context);
                             }
                             catch (Exception ex)
                             {
@@ -147,7 +147,7 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Http
                         }
                     }
 
-                    Reset();
+                    Reset(SocketInput.IsCompleted);
                 }
             }
             catch (Exception ex)
@@ -158,7 +158,7 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Http
             {
                 try
                 {
-                    ResetComponents();
+                    ResetComponents(false);
                     _abortedCts = null;
 
                     // If _requestAborted is set, the connection has already been closed.
