@@ -70,6 +70,17 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Http
             return _activeDateBytes ? _dateBytes0 : _dateBytes1;
         }
 
+        public DateHeaderValues GetDateHeaderValues()
+        {
+            _hadRequestsSinceLastTimerTick = true;
+            PrepareDateValues();
+            return new DateHeaderValues()
+            {
+                Bytes = _activeDateBytes ? _dateBytes0 : _dateBytes1,
+                String = _dateValue
+            };
+        }
+
         /// <summary>
         /// Releases all resources used by the current instance of <see cref="DateHeaderValueManager"/>.
         /// </summary>
@@ -181,6 +192,12 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Http
             _dateValue = value.ToString(Constants.RFC1123DateFormat);
             Encoding.ASCII.GetBytes(_dateValue, 0, _dateValue.Length, !_activeDateBytes ? _dateBytes0 : _dateBytes1, "\r\nDate: ".Length);
             _activeDateBytes = !_activeDateBytes;
+        }
+
+        public struct DateHeaderValues
+        {
+            public byte[] Bytes;
+            public string String;
         }
     }
 }
