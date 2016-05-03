@@ -68,6 +68,7 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Http
         private HttpVersionType _httpVersion;
 
         private readonly string _pathBase;
+        private bool _connectionInfoChanged = true;
 
         public Frame(ConnectionContext context)
             : base(context)
@@ -233,14 +234,16 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Http
             StatusCode = 200;
             ReasonPhrase = null;
 
-            var httpConnectionFeature = this as IHttpConnectionFeature;
-            httpConnectionFeature.RemoteIpAddress = RemoteEndPoint?.Address;
-            httpConnectionFeature.RemotePort = RemoteEndPoint?.Port ?? 0;
+            if (_connectionInfoChanged)
+            {
+                _remoteIpAddress = RemoteEndPoint?.Address;
+                _remotePort = RemoteEndPoint?.Port ?? 0;
+                _localIpAddress = LocalEndPoint?.Address;
+                _localPort = LocalEndPoint?.Port ?? 0;
+                _connectionId = ConnectionId;
 
-            httpConnectionFeature.LocalIpAddress = LocalEndPoint?.Address;
-            httpConnectionFeature.LocalPort = LocalEndPoint?.Port ?? 0;
-
-            httpConnectionFeature.ConnectionId = ConnectionId;
+                _connectionInfoChanged = false;
+            }
 
             PrepareRequest?.Invoke(this);
 

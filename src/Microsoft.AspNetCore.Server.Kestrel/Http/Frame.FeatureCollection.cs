@@ -11,7 +11,6 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.Features;
-using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Primitives;
 
 namespace Microsoft.AspNetCore.Server.Kestrel.Http
@@ -28,6 +27,13 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Http
         // See also: tools/Microsoft.AspNetCore.Server.Kestrel.GeneratedCode/FrameFeatureCollection.cs
 
         private int _featureRevision;
+
+        // IHttpConnectionFeature data
+        IPAddress _remoteIpAddress;
+        IPAddress _localIpAddress;
+        int _remotePort;
+        int _localPort;
+        string _connectionId;
 
         private List<KeyValuePair<Type, object>> MaybeExtra;
 
@@ -264,15 +270,35 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Http
 
         int IFeatureCollection.Revision => _featureRevision;
 
-        IPAddress IHttpConnectionFeature.RemoteIpAddress { get; set; }
+        IPAddress IHttpConnectionFeature.RemoteIpAddress
+        {
+            get { return _remoteIpAddress; }
+            set { _remoteIpAddress = value; _connectionInfoChanged = true; }
+        }
 
-        IPAddress IHttpConnectionFeature.LocalIpAddress { get; set; }
+        IPAddress IHttpConnectionFeature.LocalIpAddress
+        {
+            get { return _localIpAddress; }
+            set { _localIpAddress = value; _connectionInfoChanged = true; }
+        }
 
-        int IHttpConnectionFeature.RemotePort { get; set; }
+        int IHttpConnectionFeature.RemotePort
+        {
+            get { return _remotePort; }
+            set { _remotePort = value; _connectionInfoChanged = true; }
+        }
 
-        int IHttpConnectionFeature.LocalPort { get; set; }
+        int IHttpConnectionFeature.LocalPort
+        {
+            get { return _localPort; }
+            set { _localPort = value; _connectionInfoChanged = true; }
+        }
 
-        string IHttpConnectionFeature.ConnectionId { get; set; }
+        string IHttpConnectionFeature.ConnectionId
+        {
+            get { return _connectionId; }
+            set { _connectionId = value; _connectionInfoChanged = true; }
+        }
 
         object IFeatureCollection.this[Type key]
         {
