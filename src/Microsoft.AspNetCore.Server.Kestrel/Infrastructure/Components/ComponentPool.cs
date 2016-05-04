@@ -7,13 +7,12 @@ using System.Threading;
 
 namespace Microsoft.AspNetCore.Server.Kestrel.Infrastructure
 {
-    public class ComponentPool<T> where T : class
+    public class ComponentPool<T> : ComponentPool where T : class
     {
         private readonly T[] _objects;
 
-        private CacheLinePadded<int> _ticket;
-        private CacheLinePadded<int> _lock;
         private CacheLinePadded<int> _index;
+        private McsStackLock _mcsLock;
 
         /// <summary>
         /// Creates the pool with maxPooled objects.
@@ -24,8 +23,7 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Infrastructure
             {
                 throw new ArgumentOutOfRangeException(nameof(maxPooled));
             }
-            _ticket = new CacheLinePadded<int>();
-            _lock = new CacheLinePadded<int>();
+
             _index = new CacheLinePadded<int>() { Value = -1 };
             _objects = new T[maxPooled];
         }
@@ -42,7 +40,8 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Infrastructure
             }
             finally
             {
-                Lock();
+                var ticket = new McsStackLockTicket();
+                _mcsLock.Lock(ref ticket);
 
                 var removeIndex = _index.Value;
                 if (removeIndex >= 0)
@@ -52,7 +51,7 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Infrastructure
                     _index.Value = removeIndex - 1;
                 }
 
-                Unlock();
+                _mcsLock.Unlock(ref ticket);
             }
 
             return obj != null;
@@ -75,7 +74,8 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Infrastructure
             }
             finally
             {
-                Lock();
+                var ticket = new McsStackLockTicket();
+                _mcsLock.Lock(ref ticket);
 
                 var insertIndex = _index.Value + 1;
                 if (insertIndex < _objects.Length)
@@ -84,37 +84,83 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Infrastructure
                     _index.Value = insertIndex;
                 }
 
-                Unlock();
+                _mcsLock.Unlock(ref ticket);
+            }
+        }
+    }
+
+    public class ComponentPool
+    {
+        /// <summary>
+        /// McsStackLock is a specialized MCS Lock where its lock and unlock can only be used within the same stack scope.
+        /// Also both must be used within a finally block to prevent Thread.Abort Exceptions
+        /// </summary>
+        protected unsafe struct McsStackLock
+        {
+            private CacheLinePadded<McsStackLockTicket> _queue;
+
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            public void Lock(ref McsStackLockTicket newTicket)
+            {
+                if (newTicket.IsLocked) throw new ArgumentOutOfRangeException(nameof(newTicket));
+
+                newTicket.IsLocked = true;
+
+                fixed (McsStackLockTicket* ticket = &newTicket)
+                {
+                    var previous = Interlocked.Exchange(ref _queue.Value.Next, (IntPtr)ticket);
+                    if (previous == IntPtr.Zero)
+                    {
+                        // Have lock
+                        return;
+                    }
+
+                    Interlocked.Exchange(ref (*(McsStackLockTicket*)previous).Next, (IntPtr)ticket);
+
+                    var sw = new SpinWait();
+                    while (Volatile.Read(ref newTicket.IsLocked))
+                    {
+                        sw.SpinOnce();
+                    }
+                }
+            }
+
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            public void Unlock(ref McsStackLockTicket lockedTicket)
+            {
+                if (!lockedTicket.IsLocked) throw new ArgumentOutOfRangeException(nameof(lockedTicket));
+
+                if (lockedTicket.Next == IntPtr.Zero)
+                {
+                    fixed (McsStackLockTicket* ticket = &lockedTicket)
+                    {
+                        if (Interlocked.CompareExchange(ref _queue.Value.Next, IntPtr.Zero, (IntPtr)ticket) == (IntPtr)ticket)
+                        {
+                            // Unlocked, nothing waiting
+                            return;
+                        };
+
+                        var next = Volatile.Read(ref lockedTicket.Next);
+                        while (Volatile.Read(ref next) == IntPtr.Zero)
+                        {
+                            next = Volatile.Read(ref lockedTicket.Next);
+                        }
+
+                        Volatile.Write(ref (*((McsStackLockTicket*)next)).IsLocked, false);
+                    }
+                }
+                else
+                {
+                    Volatile.Write(ref (*((McsStackLockTicket*)lockedTicket.Next)).IsLocked, false);
+                    // Unlocked, next waiting notified
+                }
             }
         }
 
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private void Lock()
+        protected struct McsStackLockTicket
         {
-            var slot = Interlocked.Increment(ref _ticket.Value);
-            if (slot == 0)
-            {
-                slot = Interlocked.Increment(ref _ticket.Value);
-            }
-
-            var lockTaken = Interlocked.CompareExchange(ref _lock.Value, slot, 0) == 0;
-            if (lockTaken)
-            {
-                return;
-            }
-
-            var sw = new SpinWait();
-            while (!lockTaken)
-            {
-                sw.SpinOnce();
-                lockTaken = Interlocked.CompareExchange(ref _lock.Value, slot, 0) == 0;
-            }
-        }
-
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private void Unlock()
-        {
-            Interlocked.Exchange(ref _lock.Value, 0);
+            public bool IsLocked;
+            public IntPtr Next;
         }
     }
 }
