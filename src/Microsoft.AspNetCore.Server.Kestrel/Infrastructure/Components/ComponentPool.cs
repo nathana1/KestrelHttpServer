@@ -2,7 +2,7 @@
 // Licensed under the Apache License, Version 2.0. See License.txt in the project root for license information.
 
 using System;
-using System.Diagnostics;
+using System.Runtime.CompilerServices;
 using System.Threading;
 
 namespace Microsoft.AspNetCore.Server.Kestrel.Infrastructure
@@ -11,8 +11,9 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Infrastructure
     {
         private readonly T[] _objects;
 
-        private SpinLock _lock; // do not make this readonly; it's a mutable struct
-        private int _index = -1;
+        private CacheLinePadded<int> _ticket;
+        private CacheLinePadded<int> _lock;
+        private CacheLinePadded<int> _index;
 
         /// <summary>
         /// Creates the pool with maxPooled objects.
@@ -23,8 +24,9 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Infrastructure
             {
                 throw new ArgumentOutOfRangeException(nameof(maxPooled));
             }
-
-            _lock = new SpinLock(Debugger.IsAttached); // only enable thread tracking if debugger is attached; it adds non-trivial overheads to Enter/Exit
+            _ticket = new CacheLinePadded<int>();
+            _lock = new CacheLinePadded<int>();
+            _index = new CacheLinePadded<int>() { Value = -1 };
             _objects = new T[maxPooled];
         }
 
@@ -33,33 +35,32 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Infrastructure
         {
             T[] objects = _objects;
             obj = null;
-            // While holding the lock, grab whatever is at the next available index and
-            // update the index.  We do as little work as possible while holding the spin
-            // lock to minimize contention with other threads.  The try/finally is
-            // necessary to properly handle thread aborts on platforms which have them.
-            bool lockTaken = false;
+
             try
             {
-                _lock.Enter(ref lockTaken);
+                // Protect lock+unlock from Thread.Abort
+            }
+            finally
+            {
+                Lock();
 
-                var removeIndex = _index;
+                var removeIndex = _index.Value;
                 if (removeIndex >= 0)
                 {
                     obj = objects[removeIndex];
                     objects[removeIndex] = null;
-                    _index = removeIndex - 1;
+                    _index.Value = removeIndex - 1;
                 }
+
+                Unlock();
             }
-            finally
-            {
-                if (lockTaken) _lock.Exit(false);
-            }
+
             return obj != null;
         }
 
         /// <summary>
         /// Attempts to return the object to the pool.  If successful, the object will be stored
-        /// in the pool; otherwise, the buffer won't be stored.
+        /// in the pool; otherwise, the object won't be stored.
         /// </summary>
         public void Return(T obj)
         {
@@ -68,26 +69,52 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Infrastructure
                 return;
             }
 
-            // While holding the spin lock, if there's room available in the array,
-            // put the object into the next available slot.  Otherwise, we just drop it.
-            // The try/finally is necessary to properly handle thread aborts on platforms
-            // which have them.
-            bool lockTaken = false;
             try
             {
-                _lock.Enter(ref lockTaken);
-
-                var insertIndex = _index + 1;
-                if (insertIndex < _objects.Length)
-                {
-                    _objects[insertIndex] = obj;
-                    _index = insertIndex;
-                }
+                // Protect lock+unlock from Thread.Abort
             }
             finally
             {
-                if (lockTaken) _lock.Exit(false);
+                Lock();
+
+                var insertIndex = _index.Value + 1;
+                if (insertIndex < _objects.Length)
+                {
+                    _objects[insertIndex] = obj;
+                    _index.Value = insertIndex;
+                }
+
+                Unlock();
             }
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private void Lock()
+        {
+            var slot = Interlocked.Increment(ref _ticket.Value);
+            if (slot == 0)
+            {
+                slot = Interlocked.Increment(ref _ticket.Value);
+            }
+
+            var lockTaken = Interlocked.CompareExchange(ref _lock.Value, slot, 0) == 0;
+            if (lockTaken)
+            {
+                return;
+            }
+
+            var sw = new SpinWait();
+            while (!lockTaken)
+            {
+                sw.SpinOnce();
+                lockTaken = Interlocked.CompareExchange(ref _lock.Value, slot, 0) == 0;
+            }
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private void Unlock()
+        {
+            Interlocked.Exchange(ref _lock.Value, 0);
         }
     }
 }

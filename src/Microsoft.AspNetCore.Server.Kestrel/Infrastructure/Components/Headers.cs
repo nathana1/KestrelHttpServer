@@ -13,6 +13,8 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Infrastructure
         public readonly FrameRequestHeaders RequestHeaders = new FrameRequestHeaders();
         public readonly FrameResponseHeaders ResponseHeaders = new FrameResponseHeaders();
 
+        public int CorrelationId { get; set; }
+
         public void Initialize(DateHeaderValueManager dateValueManager)
         {
             var dateHeaderValues = dateValueManager.GetDateHeaderValues();

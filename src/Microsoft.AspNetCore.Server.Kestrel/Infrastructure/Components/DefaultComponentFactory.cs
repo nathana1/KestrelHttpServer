@@ -9,9 +9,15 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Infrastructure
 {
     public abstract class DefaultComponentFactory<T> : IComponentFactory<T> where T : class, IComponent
     {
-        private ComponentPool<T> _pool;
+        private static readonly int _poolCount = CalcuatePoolCount();
+        private static readonly int _poolMask = _poolCount - 1;
 
-        private int _maxPooled = 0;
+        private CacheLinePadded<int> _poolIndex = new CacheLinePadded<int>();
+        private ComponentPool<T>[] _pools = new ComponentPool<T>[_poolCount];
+
+        private int _maxPooled;
+        private int _maxPerPool;
+
         public int MaxPooled
         {
             get { return _maxPooled; }
@@ -20,19 +26,42 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Infrastructure
                 if (value < 0) throw new ArgumentOutOfRangeException(nameof(MaxPooled));
                 if (value != _maxPooled)
                 {
+                    var maxPerPool = (int)Math.Ceiling(value / (double)_poolCount);
+                    if (maxPerPool == 0 && value > 0)
+                    {
+                        maxPerPool = 1;
+                    }
+
+                    Interlocked.Exchange(ref _pools, CreatePools(_poolCount, maxPerPool));
+
                     _maxPooled = value;
-                    Interlocked.Exchange(ref _pool, null);
+                    _maxPerPool = maxPerPool;
                 }
             }
         }
 
-        private ComponentPool<T> Pool
+        public DefaultComponentFactory()
+            : this(0)
+        {
+        }
+
+        public DefaultComponentFactory(int maxPooled)
+        {
+            MaxPooled = maxPooled;
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private ComponentPool<T> GetPool(int poolIndex)
+        {
+            return Volatile.Read(ref _pools[poolIndex]);
+        }
+
+        private int NextPoolIndex
         {
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
             get
             {
-                return (MaxPooled == 0) ?
-                    null : Volatile.Read(ref _pool) ?? EnsurePoolCreated(ref _pool, MaxPooled);
+                return Interlocked.Increment(ref _poolIndex.Value) & _poolMask;
             }
         }
 
@@ -40,11 +69,17 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Infrastructure
 
         public T Create()
         {
-            T component = null;
+            if (_maxPooled == 0)
+            {
+                return CreateNew();
+            }
 
-            if (!(Pool?.TryRent(out component) ?? false))
+            int poolIndex = NextPoolIndex;
+            T component = null;
+            if (!GetPool(poolIndex).TryRent(out component))
             {
                 component = CreateNew();
+                component.CorrelationId = poolIndex;
             }
             return component;
         }
@@ -57,19 +92,36 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Infrastructure
         public void Dispose(T component)
         {
             component.Uninitialize();
-            Pool?.Return(component);
+
+            if (_maxPooled > 0)
+            {
+                GetPool(component.CorrelationId).Return(component);
+            }
         }
 
-        [MethodImpl(MethodImplOptions.NoInlining)]
-        private static ComponentPool<T> EnsurePoolCreated(ref ComponentPool<T> pool, int maxPooled)
+        private static ComponentPool<T>[] CreatePools(int poolCount, int maxPerPool)
         {
-            Interlocked.CompareExchange(ref pool, CreatePool(maxPooled), null);
-            return pool;
+            var pools = new ComponentPool<T>[poolCount];
+            for (var i = 0; i < pools.Length; i++)
+            {
+                pools[i] = new ComponentPool<T>(maxPerPool);
+            }
+
+            return pools;
         }
 
-        private static ComponentPool<T> CreatePool(int maxPooled)
+        private static int CalcuatePoolCount()
         {
-            return new ComponentPool<T>(maxPooled);
+            var processors = Environment.ProcessorCount;
+
+            if (processors > 64) return 128;
+            if (processors > 32) return 64;
+            if (processors > 16) return 32;
+            if (processors > 8) return 16;
+            if (processors > 4) return 8;
+            if (processors > 2) return 4;
+            if (processors > 1) return 2;
+            return 1;
         }
     }
 }

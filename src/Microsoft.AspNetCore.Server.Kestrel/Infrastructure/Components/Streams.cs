@@ -10,6 +10,7 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Infrastructure
         public readonly FrameRequestStream RequestBody;
         public readonly FrameResponseStream ResponseBody;
         public readonly FrameDuplexStream DuplexStream;
+        public int CorrelationId { get; set; }
 
         public Streams()
         {

@@ -2,6 +2,7 @@
 // Licensed under the Apache License, Version 2.0. See License.txt in the project root for license information.
 
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Net.Sockets;
@@ -174,15 +175,16 @@ namespace Microsoft.AspNetCore.Server.KestrelTests
         public async Task ReuseStreamsOn(ServiceContext testContext)
         {
             var streamCount = 0;
-            var loopCount = 20;
-            Stream lastStream = null;
+            var loopCount = CalcuatePoolCount() * 4;
+
+            var streams = new Dictionary<Stream, Stream>();
 
             using (var server = new TestServer(
                 context =>
                     {
-                        if (context.Request.Body != lastStream)
+                        if (!streams.ContainsKey(context.Request.Body))
                         {
-                            lastStream = context.Request.Body;
+                            streams.Add(context.Request.Body, null);
                             streamCount++;
                         }
                         context.Response.Headers.Clear();
@@ -207,7 +209,7 @@ namespace Microsoft.AspNetCore.Server.KestrelTests
                     await connection.ReceiveEnd(responseData.ToArray());
                 }
 
-                Assert.Equal(1, streamCount);
+                Assert.True(CalcuatePoolCount() >= streamCount);
             }
         }
 
@@ -216,15 +218,16 @@ namespace Microsoft.AspNetCore.Server.KestrelTests
         public async Task ReuseStreamsOff(ServiceContext testContext)
         {
             var streamCount = 0;
-            var loopCount = 20;
-            Stream lastStream = null;
+            var loopCount = CalcuatePoolCount() * 4;
+
+            var streams = new Dictionary<Stream, Stream>();
 
             using (var server = new TestServer(
                 context =>
                 {
-                    if (context.Request.Body != lastStream)
+                    if (!streams.ContainsKey(context.Request.Body))
                     {
-                        lastStream = context.Request.Body;
+                        streams.Add(context.Request.Body, null);
                         streamCount++;
                     }
                     context.Response.Headers.Clear();
@@ -1046,6 +1049,20 @@ namespace Microsoft.AspNetCore.Server.KestrelTests
             }
 
             Assert.Equal(0, testLogger.TotalErrorsLogged);
+        }
+
+        private static int CalcuatePoolCount()
+        {
+            var processors = Environment.ProcessorCount;
+
+            if (processors > 64) return 128;
+            if (processors > 32) return 64;
+            if (processors > 16) return 32;
+            if (processors > 8) return 16;
+            if (processors > 4) return 8;
+            if (processors > 2) return 4;
+            if (processors > 1) return 2;
+            return 1;
         }
     }
 }

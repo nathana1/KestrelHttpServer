@@ -5,6 +5,7 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Infrastructure
 {
     public interface IComponent
     {
+        int CorrelationId { get; set; }
         void Reset();
         void Uninitialize();
     }
