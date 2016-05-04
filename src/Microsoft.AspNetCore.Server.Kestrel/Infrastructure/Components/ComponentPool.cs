@@ -9,10 +9,11 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Infrastructure
 {
     public class ComponentPool<T> where T : class
     {
-        private readonly T[] _objects;
+        private readonly T[][] _buckets;
+        private const int _bucketCount = 32;
 
-        private SpinLock _lock; // do not make this readonly; it's a mutable struct
-        private int _index = -1;
+        private object[] _locks;
+        private int[] _indices;
 
         /// <summary>
         /// Creates the pool with maxPooled objects.
@@ -24,14 +25,23 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Infrastructure
                 throw new ArgumentOutOfRangeException(nameof(maxPooled));
             }
 
-            _lock = new SpinLock(Debugger.IsAttached); // only enable thread tracking if debugger is attached; it adds non-trivial overheads to Enter/Exit
-            _objects = new T[maxPooled];
+            var objectsPerBucket = maxPooled > _bucketCount ? maxPooled / _bucketCount : 1;
+            _locks = new object[_bucketCount];
+            _buckets = new T[_bucketCount][];
+            _indices = new int[_bucketCount];
+            for(var i = 0; i < _bucketCount; i++)
+            {
+                _locks[i] = new object();
+                _buckets[i] = new T[objectsPerBucket]; 
+                _indices[i] = -1;
+            }
         }
 
         /// <summary>Tries to take an object from the pool, returns true if sucessful.</summary>
         public bool TryRent(out T obj)
         {
-            T[] objects = _objects;
+            var bucketIndex = (Thread.CurrentThread.ManagedThreadId >> 1) % _bucketCount;
+            T[][] buckets = _buckets;
             obj = null;
             // While holding the lock, grab whatever is at the next available index and
             // update the index.  We do as little work as possible while holding the spin
@@ -40,19 +50,21 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Infrastructure
             bool lockTaken = false;
             try
             {
-                _lock.Enter(ref lockTaken);
-
-                var removeIndex = _index;
+                Monitor.Enter(_locks[bucketIndex], ref lockTaken);
+                var removeIndex = _indices[bucketIndex];
                 if (removeIndex >= 0)
                 {
-                    obj = objects[removeIndex];
-                    objects[removeIndex] = null;
-                    _index = removeIndex - 1;
+                    obj = buckets[bucketIndex][removeIndex];
+                    buckets[bucketIndex][removeIndex] = null;
+                    _indices[bucketIndex] = removeIndex - 1;
                 }
             }
             finally
             {
-                if (lockTaken) _lock.Exit(false);
+                if (lockTaken) 
+                {
+                    Monitor.Exit(_locks[bucketIndex]);
+                }
             }
             return obj != null;
         }
@@ -72,21 +84,24 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Infrastructure
             // put the object into the next available slot.  Otherwise, we just drop it.
             // The try/finally is necessary to properly handle thread aborts on platforms
             // which have them.
+            var bucketIndex = (Thread.CurrentThread.ManagedThreadId >> 1) % _bucketCount;
             bool lockTaken = false;
             try
             {
-                _lock.Enter(ref lockTaken);
-
-                var insertIndex = _index + 1;
-                if (insertIndex < _objects.Length)
+                Monitor.Enter(_locks[bucketIndex], ref lockTaken);
+                var insertIndex = _indices[bucketIndex] + 1;
+                if (insertIndex < _buckets[bucketIndex].Length)
                 {
-                    _objects[insertIndex] = obj;
-                    _index = insertIndex;
+                    _buckets[bucketIndex][insertIndex] = obj;
+                    _indices[bucketIndex] = insertIndex;
                 }
             }
             finally
             {
-                if (lockTaken) _lock.Exit(false);
+                if (lockTaken) 
+                {
+                    Monitor.Exit(_locks[bucketIndex]);
+                }
             }
         }
     }
